@@ -1,0 +1,21 @@
+<configure
+    xmlns="http://namespaces.zope.org/zope"
+    xmlns:browser="http://namespaces.zope.org/browser">
+
+  <!-- Override @@images view to use Thumbor URL generation -->
+  <browser:page
+      name="images"
+      for="plone.namedfile.interfaces.IImageScaleTraversable"
+      class=".scaling.ThumborImageScaling"
+      allowed_attributes="scale tag"
+      permission="zope2.View"
+      />
+
+  <!-- Override scale storage to prevent Pillow invocation -->
+  <adapter
+      for="plone.namedfile.interfaces.IImageScaleTraversable *"
+      factory=".storage.ThumborScaleStorage"
+      provides="plone.scale.storage.IImageScaleStorage"
+      />
+
+</configure>

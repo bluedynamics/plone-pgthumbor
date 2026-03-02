@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: zodb
+      POSTGRES_PASSWORD: zodb
+      POSTGRES_DB: zodb
+    ports:
+      - "5434:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "zodb"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  thumbor:
+    build:
+      context: ../../..
+      dockerfile: sources/plone-pgthumbor/example/thumbor/Dockerfile
+    environment:
+      PGTHUMBOR_DSN: "dbname=zodb user=zodb password=zodb host=postgres"
+      THUMBOR_SECURITY_KEY: "dev-secret-key"
+      ALLOW_UNSAFE_URL: "True"
+    ports:
+      - "8888:8888"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  plone:
+    build:
+      context: ../../..
+      dockerfile: sources/plone-pgthumbor/example/plone/Dockerfile
+    command: ["start"]
+    environment:
+      PGJSONB_DSN: "dbname=zodb user=zodb password=zodb host=postgres port=5432"
+      SITE: "Plone"
+      TYPE: "classic"
+      PROFILES: "plone.pgcatalog:default"
+      PGTHUMBOR_SERVER_URL: "http://thumbor:8888"
+      PGTHUMBOR_SECURITY_KEY: "dev-secret-key"
+    ports:
+      - "8082:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      thumbor:
+        condition: service_started
+
+volumes:
+  pgdata:

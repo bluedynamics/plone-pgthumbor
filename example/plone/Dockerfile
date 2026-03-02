@@ -6,8 +6,13 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 # Released packages from PyPI (install into /app venv, not system Python)
 RUN uv pip install --python /app/bin/python --no-cache \
     "zodb-pgjsonb>=1.3" \
-    "zodb-json-codec>=1.6" \
-    "plone.pgcatalog>=1.0.0b13"
+    "zodb-json-codec>=1.6"
+
+# Local: plone-pgcatalog (fixes new-object indexing via __dict__ fallback)
+COPY sources/plone-pgcatalog /tmp/plone-pgcatalog
+RUN cd /tmp/plone-pgcatalog && \
+    SETUPTOOLS_SCM_PRETEND_VERSION=0.1.0 uv pip install --python /app/bin/python --no-cache . && \
+    rm -rf /tmp/plone-pgcatalog
 
 # Local: plone-pgthumbor (not yet on PyPI)
 COPY sources/plone-pgthumbor /tmp/plone-pgthumbor

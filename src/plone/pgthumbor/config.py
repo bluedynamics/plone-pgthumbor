@@ -40,7 +40,9 @@ def get_thumbor_config() -> ThumborConfig | None:
     security_key = os.environ.get("PGTHUMBOR_SECURITY_KEY", "").strip()
 
     if not security_key and not unsafe:
-        logger.warning("PGTHUMBOR_SECURITY_KEY not set and unsafe mode disabled — Thumbor URLs unavailable")
+        logger.warning(
+            "PGTHUMBOR_SECURITY_KEY not set and unsafe mode disabled — Thumbor URLs unavailable"
+        )
         return None
 
     return ThumborConfig(

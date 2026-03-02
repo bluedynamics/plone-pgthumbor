@@ -25,7 +25,9 @@ class TestThumborScaleStorage:
         """scale() should delegate to pre_scale() — no Pillow."""
         storage = _make_storage()
 
-        with patch.object(storage, "pre_scale", return_value={"uid": "test-uid", "data": None}) as mock_pre:
+        with patch.object(
+            storage, "pre_scale", return_value={"uid": "test-uid", "data": None}
+        ) as mock_pre:
             result = storage.scale(fieldname="image", width=400, height=300)
 
         mock_pre.assert_called_once_with(fieldname="image", width=400, height=300)
@@ -62,7 +64,9 @@ class TestThumborScaleStorage:
         storage = _make_storage()
 
         with (
-            patch.object(storage, "pre_scale", return_value={"uid": "test", "data": None}),
+            patch.object(
+                storage, "pre_scale", return_value={"uid": "test", "data": None}
+            ),
             patch("plone.scale.storage.IImageScaleFactory") as mock_factory,
         ):
             storage.scale(fieldname="image", width=400, height=300)

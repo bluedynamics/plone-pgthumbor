@@ -131,7 +131,7 @@ class TestThumborUrl:
         )
 
         # Extract path after server URL
-        path = url[len(SERVER):]
+        path = url[len(SERVER) :]
 
         # libthumbor should produce the same result
         crypto = CryptoURL(key=KEY)

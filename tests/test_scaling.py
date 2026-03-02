@@ -287,3 +287,206 @@ class TestScaleModeMapping:
         )
 
         assert "/smart/" in scale.url
+
+
+class TestNeedsAuthUrl:
+    """Test _needs_auth_url() helper."""
+
+    def _make_context(self, oid_int=0x42):
+        ctx = MagicMock()
+        ctx._p_oid = struct.pack(">Q", oid_int)
+        return ctx
+
+    def test_paranoid_mode_always_returns_true(self, monkeypatch):
+        """Paranoid mode → always return True regardless of allowedRolesAndUsers."""
+        from plone.pgthumbor import scaling as scaling_mod
+
+        mock_registry = MagicMock()
+        mock_settings = MagicMock()
+        mock_settings.paranoid_mode = True
+        mock_registry.forInterface.return_value = mock_settings
+
+        def mock_query_utility(iface):
+            from plone.registry.interfaces import IRegistry
+
+            if iface is IRegistry:
+                return mock_registry
+            return None
+
+        monkeypatch.setattr(
+            "plone.pgthumbor.scaling.queryUtility",
+            mock_query_utility,
+            raising=False,
+        )
+
+        ctx = self._make_context()
+        # Even if Anonymous is in allowedRolesAndUsers, paranoid → True
+        result = scaling_mod._needs_auth_url(ctx, 0x42)
+        assert result is True
+
+    def test_anonymous_in_allowedroles_returns_false(self, monkeypatch):
+        """Anonymous in allowedRolesAndUsers → no auth needed → False."""
+        from plone.pgthumbor import scaling as scaling_mod
+
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value.fetchone.return_value = {
+            "is_anon": True
+        }  # Anonymous present
+
+        mock_pool = MagicMock()
+
+        monkeypatch.setattr(
+            "plone.pgthumbor.scaling.queryUtility", lambda iface: None, raising=False
+        )
+        monkeypatch.setattr(
+            "plone.pgthumbor.scaling.get_pool", lambda ctx: mock_pool, raising=False
+        )
+        monkeypatch.setattr(
+            "plone.pgthumbor.scaling.get_request_connection",
+            lambda pool: mock_conn,
+            raising=False,
+        )
+
+        ctx = MagicMock()
+        result = scaling_mod._needs_auth_url(ctx, 0x42)
+        assert result is False
+
+    def test_no_anonymous_in_allowedroles_returns_true(self, monkeypatch):
+        """Anonymous NOT in allowedRolesAndUsers → auth needed → True."""
+        from plone.pgthumbor import scaling as scaling_mod
+
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value.fetchone.return_value = {
+            "is_anon": False
+        }  # Anonymous absent
+
+        mock_pool = MagicMock()
+
+        monkeypatch.setattr(
+            "plone.pgthumbor.scaling.queryUtility", lambda iface: None, raising=False
+        )
+        monkeypatch.setattr(
+            "plone.pgthumbor.scaling.get_pool", lambda ctx: mock_pool, raising=False
+        )
+        monkeypatch.setattr(
+            "plone.pgthumbor.scaling.get_request_connection",
+            lambda pool: mock_conn,
+            raising=False,
+        )
+
+        ctx = MagicMock()
+        result = scaling_mod._needs_auth_url(ctx, 0x42)
+        assert result is True
+
+    def test_not_in_catalog_returns_true(self, monkeypatch):
+        """Object not in catalog (None row) → conservative → True."""
+        from plone.pgthumbor import scaling as scaling_mod
+
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value.fetchone.return_value = None  # not found
+
+        mock_pool = MagicMock()
+
+        monkeypatch.setattr(
+            "plone.pgthumbor.scaling.queryUtility", lambda iface: None, raising=False
+        )
+        monkeypatch.setattr(
+            "plone.pgthumbor.scaling.get_pool", lambda ctx: mock_pool, raising=False
+        )
+        monkeypatch.setattr(
+            "plone.pgthumbor.scaling.get_request_connection",
+            lambda pool: mock_conn,
+            raising=False,
+        )
+
+        ctx = MagicMock()
+        result = scaling_mod._needs_auth_url(ctx, 0x42)
+        assert result is True
+
+
+class TestThumborImageScaleAuthUrl:
+    """Test that ThumborImageScale passes content_zoid for restricted content."""
+
+    def test_public_content_no_content_zoid(self, monkeypatch):
+        """When _needs_auth_url returns False, URL is 2-segment."""
+        from plone.pgthumbor import scaling as scaling_mod
+        from plone.pgthumbor.scaling import ThumborImageScale
+
+        _setup_env(monkeypatch)
+        monkeypatch.setattr(scaling_mod, "_needs_auth_url", lambda ctx, zoid: False)
+
+        ctx = MagicMock()
+        ctx._p_oid = struct.pack(">Q", 0x42)
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        request = MagicMock()
+        data = _mock_image_data()
+
+        scale = ThumborImageScale(
+            ctx,
+            request,
+            data=data,
+            fieldname="image",
+            width=400,
+            height=300,
+            uid="image-400-abc123",
+            mimetype="image/jpeg",
+        )
+        assert not scale.url.endswith("/42/ff/" + format(0x42, "x"))
+        # 2-segment: ends with blob_zoid/tid
+        parts = scale.url.rstrip("/").split("/")
+        # last two segments are hex (no 3rd segment for content_zoid)
+        assert parts[-1] == "ff"
+
+    def test_restricted_content_has_content_zoid(self, monkeypatch):
+        """When _needs_auth_url returns True, URL is 3-segment."""
+        from plone.pgthumbor import scaling as scaling_mod
+        from plone.pgthumbor.scaling import ThumborImageScale
+
+        _setup_env(monkeypatch)
+        content_oid_int = 0x99
+        monkeypatch.setattr(scaling_mod, "_needs_auth_url", lambda ctx, zoid: True)
+
+        ctx = MagicMock()
+        ctx._p_oid = struct.pack(">Q", content_oid_int)
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        request = MagicMock()
+        data = _mock_image_data()
+
+        scale = ThumborImageScale(
+            ctx,
+            request,
+            data=data,
+            fieldname="image",
+            width=400,
+            height=300,
+            uid="image-400-abc123",
+            mimetype="image/jpeg",
+        )
+        # 3-segment: ends with blob_zoid/tid/content_zoid
+        assert scale.url.endswith(f"/42/ff/{content_oid_int:x}")
+
+    def test_no_p_oid_skips_auth(self, monkeypatch):
+        """Context without valid _p_oid → no content_zoid appended."""
+        from plone.pgthumbor.scaling import ThumborImageScale
+
+        _setup_env(monkeypatch)
+
+        ctx = MagicMock()
+        ctx._p_oid = None  # not persisted
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        request = MagicMock()
+        data = _mock_image_data()
+
+        scale = ThumborImageScale(
+            ctx,
+            request,
+            data=data,
+            fieldname="image",
+            width=400,
+            height=300,
+            uid="image-400-abc123",
+            mimetype="image/jpeg",
+        )
+        # Falls back to 2-segment URL
+        parts = scale.url.rstrip("/").split("/")
+        assert parts[-1] == "ff"

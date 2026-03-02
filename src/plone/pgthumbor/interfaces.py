@@ -39,3 +39,13 @@ class IThumborSettings(Interface):
         required=False,
         default=False,
     )
+
+    paranoid_mode = schema.Bool(
+        title="Paranoid Mode",
+        description=(
+            "Always verify image access with Plone for every request, "
+            "even for publicly accessible content."
+        ),
+        required=False,
+        default=False,
+    )

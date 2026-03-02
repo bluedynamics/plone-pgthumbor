@@ -19,6 +19,7 @@ class ThumborConfig:
     security_key: str = ""
     unsafe: bool = False
     smart_cropping: bool = False
+    paranoid_mode: bool = False
 
     def __post_init__(self):
         # Strip trailing slash from server_url

@@ -211,3 +211,71 @@ class TestScaleModeToThumbor:
 
         params = scale_mode_to_thumbor("unknown", smart_cropping=True)
         assert params == {"fit_in": True, "smart": True}
+
+
+class TestThumborUrlContentZoid:
+    """Test thumbor_url() with content_zoid parameter for authenticated URLs."""
+
+    def test_content_zoid_none_gives_two_segment_url(self):
+        """content_zoid=None → 2-segment image URL (blob_zoid/tid)."""
+        from plone.pgthumbor.url import thumbor_url
+
+        url = thumbor_url(
+            server_url=SERVER,
+            security_key=KEY,
+            zoid=0x42,
+            tid=0xFF,
+            width=400,
+            height=0,
+            content_zoid=None,
+        )
+        assert url.endswith("/42/ff")
+
+    def test_content_zoid_set_gives_three_segment_url(self):
+        """content_zoid=0x1A → 3-segment image URL (blob_zoid/tid/content_zoid)."""
+        from plone.pgthumbor.url import thumbor_url
+
+        url = thumbor_url(
+            server_url=SERVER,
+            security_key=KEY,
+            zoid=0x42,
+            tid=0xFF,
+            width=400,
+            height=0,
+            content_zoid=0x1A,
+        )
+        assert url.endswith("/42/ff/1a")
+
+    def test_content_zoid_is_hex_lowercase(self):
+        """content_zoid appears as lowercase hex."""
+        from plone.pgthumbor.url import thumbor_url
+
+        url = thumbor_url(
+            server_url=SERVER,
+            security_key=KEY,
+            zoid=0x42,
+            tid=0xFF,
+            width=0,
+            height=0,
+            content_zoid=0xDEAD,
+        )
+        assert url.endswith("/42/ff/dead")
+
+    def test_content_zoid_included_in_signature(self):
+        """3-segment URL signature covers the content_zoid segment."""
+        from libthumbor import CryptoURL
+        from plone.pgthumbor.url import thumbor_url
+
+        url = thumbor_url(
+            server_url=SERVER,
+            security_key=KEY,
+            zoid=0x42,
+            tid=0xFF,
+            width=400,
+            height=0,
+            content_zoid=0x1A,
+        )
+        path = url[len(SERVER) :]
+        crypto = CryptoURL(key=KEY)
+        expected_path = crypto.generate(image_url="42/ff/1a", width=400, height=0)
+        assert path == expected_path

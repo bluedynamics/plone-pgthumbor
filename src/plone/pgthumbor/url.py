@@ -16,6 +16,7 @@ def thumbor_url(
     fit_in: bool = False,
     unsafe: bool = False,
     filters: list[str] | None = None,
+    content_zoid: int | None = None,
 ) -> str:
     """Generate a signed (or unsafe) Thumbor URL for a blob.
 
@@ -30,11 +31,16 @@ def thumbor_url(
         fit_in: Enable fit-in mode (no crop).
         unsafe: Generate unsigned /unsafe/ URL.
         filters: Optional list of Thumbor filter strings.
+        content_zoid: Content object ZOID for authenticated URLs (3-segment format).
+                      When set, appends /{content_zoid:x} to the image URL so the
+                      Thumbor auth handler can verify Plone access.
 
     Returns:
         Full Thumbor URL string.
     """
     image_url = f"{zoid:x}/{tid:x}"
+    if content_zoid is not None:
+        image_url += f"/{content_zoid:x}"
 
     crypto = CryptoURL(key=security_key)
     kwargs = {

@@ -39,7 +39,7 @@ services:
       PGJSONB_DSN: "dbname=zodb user=zodb password=zodb host=postgres port=5432"
       SITE: "Plone"
       TYPE: "classic"
-      PROFILES: "plone.pgcatalog:default plone.pgthumbor:default"
+      PROFILES: "plone.pgcatalog:default,plone.pgthumbor:default"
       # Public URL used by Plone to generate Thumbor image URLs in HTML.
       # Must be the nginx-facing URL so browsers can reach it.
       PGTHUMBOR_SERVER_URL: "http://localhost:8080/thumbor"

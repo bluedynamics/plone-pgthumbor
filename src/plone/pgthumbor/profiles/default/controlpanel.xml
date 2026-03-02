@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<object name="portal_controlpanel">
+  <configlet
+      title="Thumbor Image Scaling"
+      action_id="thumbor-settings"
+      appId="plone.pgthumbor"
+      category="Products"
+      condition_expr=""
+      icon_expr=""
+      url_expr="string:${portal_url}/@@thumbor-settings"
+      visible="True">
+    <permission>Manage portal</permission>
+  </configlet>
+</object>

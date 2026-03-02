@@ -1,9 +1,12 @@
 <configure
     xmlns="http://namespaces.zope.org/zope"
+    xmlns:browser="http://namespaces.zope.org/browser"
     xmlns:genericsetup="http://namespaces.zope.org/genericsetup"
+    xmlns:plone="http://namespaces.plone.org/plone"
     i18n_domain="plone.pgthumbor">
 
   <include package="plone.namedfile" />
+  <include package="plone.rest" file="meta.zcml" />
 
   <genericsetup:registerProfile
       name="default"
@@ -11,6 +14,32 @@
       description="Thumbor image scaling for Plone"
       directory="profiles/default"
       provides="Products.GenericSetup.interfaces.EXTENSION"
+      post_handler=".setuphandlers.post_install"
+      />
+
+  <!-- @thumbor-auth REST API service -->
+  <plone:service
+      method="GET"
+      name="@thumbor-auth"
+      factory=".restapi.ThumborAuthService"
+      permission="zope2.Public"
+      for="plone.base.interfaces.INavigationRoot"
+      />
+
+  <!-- Thumbor settings control panel -->
+  <browser:page
+      name="thumbor-settings"
+      for="Products.CMFPlone.interfaces.IPloneSiteRoot"
+      class=".controlpanel.ThumborSettings"
+      permission="cmf.ManagePortal"
+      />
+
+  <!-- Setup endpoint (registers registry records in-process) -->
+  <browser:page
+      name="thumbor-setup"
+      for="Products.CMFPlone.interfaces.IPloneSiteRoot"
+      class=".setuphandlers.SetupView"
+      permission="cmf.ManagePortal"
       />
 
 </configure>

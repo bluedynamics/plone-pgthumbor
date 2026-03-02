@@ -24,7 +24,10 @@ classifiers = [
 ]
 dependencies = [
     "libthumbor>=2.0",
+    "plone.app.registry",
     "plone.namedfile",
+    "plone.pgcatalog",
+    "plone.rest",
     "plone.scale>=5.0.0a1",
     "ZODB",
     "zodb-pgjsonb>=1.1",

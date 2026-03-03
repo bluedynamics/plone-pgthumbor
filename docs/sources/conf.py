@@ -3,9 +3,9 @@
 # -- Project information -----------------------------------------------------
 
 project = "plone.pgthumbor"
-copyright = "2024-2026, BlueDynamics Alliance"  # noqa: A001
+copyright = "2026, BlueDynamics Alliance"  # noqa: A001
 author = "Jens Klein and contributors"
-release = "1.0"
+release = "0.1.0"
 
 # -- General configuration ---------------------------------------------------
 
@@ -41,16 +41,20 @@ html_theme_options = {
     "dark_code": True,
     "nav_links": [
         {
-            "title": "GitHub (Plone addon)",
+            "title": "GitHub (addon)",
             "url": "https://github.com/bluedynamics/plone-pgthumbor",
         },
         {
-            "title": "GitHub (Thumbor loader)",
+            "title": "PyPI (addon)",
+            "url": "https://pypi.org/project/plone.pgthumbor/",
+        },
+        {
+            "title": "GitHub (loader)",
             "url": "https://github.com/bluedynamics/zodb-pgjsonb-thumborblobloader",
         },
         {
-            "title": "PyPI",
-            "url": "https://pypi.org/project/plone.pgthumbor/",
+            "title": "PyPI (loader)",
+            "url": "https://pypi.org/project/zodb-pgjsonb-thumborblobloader/",
         },
     ],
 }

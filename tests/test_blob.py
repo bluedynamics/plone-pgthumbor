@@ -81,3 +81,16 @@ class TestGetBlobIds:
         result = get_blob_ids(field)
 
         assert result is None
+
+    def test_returns_none_when_activation_fails(self):
+        """Blob that fails to activate returns None."""
+        from plone.pgthumbor.blob import get_blob_ids
+
+        img = MagicMock()
+        blob = MagicMock()
+        blob._p_oid = struct.pack(">Q", 0x42)
+        blob._p_activate.side_effect = Exception("connection closed")
+        img._blob = blob
+        result = get_blob_ids(img)
+
+        assert result is None

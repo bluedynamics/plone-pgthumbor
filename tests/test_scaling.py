@@ -490,3 +490,108 @@ class TestThumborImageScaleAuthUrl:
         # Falls back to 2-segment URL
         parts = scale.url.rstrip("/").split("/")
         assert parts[-1] == "ff"
+
+    def test_blob_ids_none_falls_back(self, monkeypatch):
+        """When get_blob_ids returns None, use standard Plone URL."""
+        from plone.pgthumbor import scaling as scaling_mod
+        from plone.pgthumbor.scaling import ThumborImageScale
+
+        _setup_env(monkeypatch)
+        monkeypatch.setattr(scaling_mod, "get_blob_ids", lambda data: None)
+
+        ctx = MagicMock()
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        request = MagicMock()
+        data = _mock_image_data()
+
+        scale = ThumborImageScale(
+            ctx,
+            request,
+            data=data,
+            fieldname="image",
+            width=400,
+            height=300,
+            uid="image-400-abc123",
+            mimetype="image/jpeg",
+        )
+
+        assert "@@images" in scale.url
+        assert SERVER not in scale.url
+
+    def test_index_html_fallback_without_thumbor(self, monkeypatch):
+        """index_html() delegates to super when no Thumbor URL set."""
+        from plone.pgthumbor.scaling import ThumborImageScale
+        from unittest.mock import patch
+
+        env_override(monkeypatch)  # no Thumbor config
+        ctx = MagicMock()
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        request = MagicMock()
+        data = _mock_image_data()
+
+        scale = ThumborImageScale(
+            ctx,
+            request,
+            data=data,
+            fieldname="image",
+            width=400,
+            height=300,
+            uid="image-400-abc123",
+            mimetype="image/jpeg",
+        )
+
+        assert scale._thumbor_url is None
+        # index_html delegates to super — don't redirect
+        with patch.object(type(scale).__mro__[1], "index_html", return_value=b"image"):
+            result = scale.index_html()
+        request.response.redirect.assert_not_called()
+        assert result == b"image"
+
+
+class TestNeedsAuthUrlExceptionPaths:
+    """Test _needs_auth_url() exception handling paths."""
+
+    def test_registry_exception_falls_through_to_pg(self, monkeypatch):
+        """Registry access failure → falls through to PG query."""
+        from plone.pgthumbor import scaling as scaling_mod
+
+        def broken_registry(iface):
+            raise Exception("component architecture not loaded")
+
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value.fetchone.return_value = {"is_anon": True}
+        mock_pool = MagicMock()
+
+        monkeypatch.setattr(
+            "plone.pgthumbor.scaling.queryUtility", broken_registry, raising=False
+        )
+        monkeypatch.setattr(
+            "plone.pgthumbor.scaling.get_pool", lambda ctx: mock_pool, raising=False
+        )
+        monkeypatch.setattr(
+            "plone.pgthumbor.scaling.get_request_connection",
+            lambda pool: mock_conn,
+            raising=False,
+        )
+
+        ctx = MagicMock()
+        result = scaling_mod._needs_auth_url(ctx, 0x42)
+        # Registry failed but PG says Anonymous → False
+        assert result is False
+
+    def test_pg_exception_returns_true(self, monkeypatch):
+        """PG query failure → fail safe → True."""
+        from plone.pgthumbor import scaling as scaling_mod
+
+        monkeypatch.setattr(
+            "plone.pgthumbor.scaling.queryUtility", lambda iface: None, raising=False
+        )
+        monkeypatch.setattr(
+            "plone.pgthumbor.scaling.get_pool",
+            lambda ctx: (_ for _ in ()).throw(Exception("no pool")),
+            raising=False,
+        )
+
+        ctx = MagicMock()
+        result = scaling_mod._needs_auth_url(ctx, 0x42)
+        assert result is True

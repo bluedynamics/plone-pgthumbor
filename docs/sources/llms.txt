@@ -1,0 +1,29 @@
+# plone.pgthumbor
+
+> Plone addon that replaces in-ZODB image scaling (Pillow) with Thumbor.
+> Includes zodb-pgjsonb-thumborblobloader for Thumbor-side blob loading from PostgreSQL.
+
+## Key concepts
+
+- plone-pgthumbor: Plone 6 addon, replaces @@images with 302 redirects to Thumbor
+- zodb-pgjsonb-thumborblobloader: Thumbor 7 loader, reads blobs from PostgreSQL blob_state table
+- HMAC-signed URLs prevent arbitrary image transformation requests
+- 3-segment authenticated URLs for non-public content (auth handler calls Plone REST service)
+- Smart focal point detection via Thumbor
+- S3 fallback for tiered blob storage
+- Zero Pillow dependency in Plone process
+- Zero ZODB write-on-read for image scales
+
+## Architecture
+
+Browser -> Plone (302 redirect with signed Thumbor URL)
+Browser -> Thumbor (scale + cache + serve)
+Thumbor -> PostgreSQL blob_state (or S3 fallback)
+Thumbor -> Plone @thumbor-auth REST service (for non-public content)
+
+## Documentation sections
+
+- Tutorials: quickstart-docker
+- How-to: install, configure-thumbor, configure-plone, deploy-production, enable-s3-fallback
+- Reference: configuration, url-format, rest-api, changelog
+- Explanation: architecture, security, why-thumbor, cloud-native

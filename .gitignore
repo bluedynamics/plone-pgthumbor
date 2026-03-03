@@ -30,3 +30,6 @@ venv/
 
 # Docs build
 docs/_build/
+docs/html/
+docs/.mxmake/
+docs/.venv/

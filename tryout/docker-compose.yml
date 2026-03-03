@@ -16,14 +16,11 @@ services:
       retries: 5
 
   thumbor:
-    build:
-      context: ../../..
-      dockerfile: sources/plone-pgthumbor/example/thumbor/Dockerfile
+    build: thumbor
     environment:
       PGTHUMBOR_DSN: "dbname=zodb user=zodb password=zodb host=postgres"
       THUMBOR_SECURITY_KEY: "dev-secret-key"
       ALLOW_UNSAFE_URL: "True"
-      # Internal Plone URL — bypasses nginx, used for @thumbor-auth subrequests
       PGTHUMBOR_PLONE_AUTH_URL: "http://plone:8080/Plone"
       PGTHUMBOR_AUTH_CACHE_TTL: "60"
     depends_on:
@@ -31,17 +28,13 @@ services:
         condition: service_healthy
 
   plone:
-    build:
-      context: ../../..
-      dockerfile: sources/plone-pgthumbor/example/plone/Dockerfile
+    build: plone
     command: ["start"]
     environment:
       PGJSONB_DSN: "dbname=zodb user=zodb password=zodb host=postgres port=5432"
       SITE: "Plone"
       TYPE: "classic"
       PROFILES: "plone.pgcatalog:default,plone.pgthumbor:default"
-      # Public URL used by Plone to generate Thumbor image URLs in HTML.
-      # Must be the nginx-facing URL so browsers can reach it.
       PGTHUMBOR_SERVER_URL: "http://localhost:8080/thumbor"
       PGTHUMBOR_SECURITY_KEY: "dev-secret-key"
     depends_on:

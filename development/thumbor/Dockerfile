@@ -12,7 +12,7 @@ RUN cd /tmp/thumborblobloader && \
     SETUPTOOLS_SCM_PRETEND_VERSION=0.1.0 uv pip install --system --no-cache . && \
     rm -rf /tmp/thumborblobloader
 
-COPY sources/plone-pgthumbor/example/thumbor/thumbor.conf /etc/thumbor.conf
+COPY sources/plone-pgthumbor/development/thumbor/thumbor.conf /etc/thumbor.conf
 
 EXPOSE 8888
 

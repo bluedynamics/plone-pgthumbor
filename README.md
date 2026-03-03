@@ -68,16 +68,18 @@ Environment variables take precedence over Plone registry settings (`IThumborSet
 | `cover` | Smart crop to exact dimensions |
 | `contain` | `fit-in` only — fits within box, no crop |
 
-## Docker Compose example
+## Try It Out
 
-A working example stack (Plone 6.2 + Thumbor + PostgreSQL) is in [example/](example/).
+A self-contained Docker Compose stack (Plone 6.2 + Thumbor + PostgreSQL + nginx)
+using PyPI releases is in [tryout/](tryout/).
 
 ```bash
-cd example
-docker compose up
-# Plone at http://localhost:8080/Plone  (admin/admin)
-# Thumbor at http://localhost:8888
+cd tryout
+docker compose up -d --build
+# Plone at http://localhost:8080  (admin/admin)
 ```
+
+For development with local source installs, use [development/](development/) instead.
 
 ## Source Code and Contributions
 

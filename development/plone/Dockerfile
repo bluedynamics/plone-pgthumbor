@@ -21,6 +21,6 @@ RUN cd /tmp/plone-pgthumbor && \
     rm -rf /tmp/plone-pgthumbor
 
 # Override zope.conf with pgjsonb storage config
-COPY sources/plone-pgthumbor/example/plone/zope.conf /app/etc/zope.conf
+COPY sources/plone-pgthumbor/development/plone/zope.conf /app/etc/zope.conf
 
 EXPOSE 8080

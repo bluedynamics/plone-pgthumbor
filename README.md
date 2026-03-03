@@ -81,6 +81,15 @@ docker compose up -d --build
 
 For development with local source installs, use [development/](development/) instead.
 
+## Documentation
+
+Rendered documentation: **https://bluedynamics.github.io/plone-pgthumbor/**
+
+- [Architecture](https://github.com/bluedynamics/plone-pgthumbor/blob/main/docs/sources/explanation/architecture.md) -- request flow, Thumbor integration design
+- [Security](https://github.com/bluedynamics/plone-pgthumbor/blob/main/docs/sources/explanation/security.md) -- three-layer access control model
+- [Configuration Reference](https://github.com/bluedynamics/plone-pgthumbor/blob/main/docs/sources/reference/configuration.md) -- all settings for Plone and Thumbor
+- [CHANGES.md](https://github.com/bluedynamics/plone-pgthumbor/blob/main/CHANGES.md) -- changelog
+
 ## Source Code and Contributions
 
 The source code is managed in a Git repository, with its main branches hosted on GitHub.
@@ -96,4 +105,4 @@ We also offer commercial support if any training, coaching, integration or adapt
 
 ## License
 
-ZPL-2.1 (Zope Public License)
+GPL-2.0

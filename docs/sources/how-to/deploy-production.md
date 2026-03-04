@@ -1,11 +1,11 @@
 <!-- diataxis: how-to -->
 
-# Production Deployment Checklist
+# Production deployment checklist
 
 This guide covers the key considerations for deploying plone.pgthumbor and
 Thumbor in a production environment.
 
-## HMAC Key Management
+## HMAC key management
 
 Generate a strong random key (at least 32 characters):
 
@@ -23,7 +23,7 @@ This key must be shared between Plone and Thumbor:
 Store the key in a secrets manager (Vault, AWS Secrets Manager, Docker
 secrets).  Never commit it to version control.
 
-## Disable Unsafe Mode
+## Disable unsafe mode
 
 In `thumbor.conf`:
 
@@ -33,12 +33,12 @@ ALLOW_UNSAFE_URL = False
 
 On the Plone side, do **not** set `PGTHUMBOR_UNSAFE=true`.
 
-## Reverse Proxy Configuration
+## Reverse proxy configuration
 
 Thumbor should not be directly exposed to the internet.  Place it behind a
 reverse proxy (nginx, Traefik, Caddy).
 
-### nginx Example
+### nginx example
 
 ```nginx
 server {
@@ -80,7 +80,7 @@ Key points:
 - Plone generates Thumbor URLs using this base URL, so it must be reachable
   from the end user's browser.
 
-### Traefik Example (Docker Labels)
+### Traefik example (Docker Labels)
 
 ```yaml
 thumbor:
@@ -92,7 +92,7 @@ thumbor:
     - "traefik.http.services.thumbor.loadbalancer.server.port=8888"
 ```
 
-## Internal Network for Auth Requests
+## Internal network for auth requests
 
 The `auth_handler` in Thumbor calls Plone's `@thumbor-auth` endpoint to verify
 access for non-public images.  This must be an internal, direct URL that
@@ -125,7 +125,7 @@ All traffic between the browser and the reverse proxy must use HTTPS.
 - Thumbor itself does not need TLS -- it runs behind the reverse proxy on an
   internal network.
 
-## Thumbor Result Storage
+## Thumbor result storage
 
 Thumbor caches already-scaled images in its result storage.  For production:
 
@@ -148,7 +148,7 @@ RESULT_STORAGE = "thumbor.result_storages.no_storage"
 If a CDN (CloudFront, Fastly, Cloudflare) caches responses, Thumbor's own
 result cache is unnecessary.
 
-## Blob Disk Cache Sizing
+## Blob disk cache sizing
 
 The loader-side disk cache (`PGTHUMBOR_CACHE_DIR` / `PGTHUMBOR_CACHE_MAX_SIZE`)
 caches raw blob bytes before Thumbor processes them.  This is especially
@@ -166,7 +166,7 @@ PGTHUMBOR_CACHE_DIR = "/var/cache/thumbor/blobs"
 PGTHUMBOR_CACHE_MAX_SIZE = 5368709120  # 5 GB
 ```
 
-## Connection Pool Sizing
+## Connection pool sizing
 
 The default pool settings (`PGTHUMBOR_POOL_MIN_SIZE=1`,
 `PGTHUMBOR_POOL_MAX_SIZE=4`) work for low-traffic sites.  For higher
@@ -180,7 +180,7 @@ PGTHUMBOR_POOL_MAX_SIZE = 16
 Each connection uses one PostgreSQL backend slot.  Make sure
 `max_connections` in `postgresql.conf` has enough headroom for all services.
 
-## Auth Cache TTL
+## Auth cache TTL
 
 The default `PGTHUMBOR_AUTH_CACHE_TTL=60` means that permission changes take
 up to 60 seconds to take effect for cached images.  Adjust based on your
@@ -200,7 +200,7 @@ security requirements:
 - **Metrics:** Thumbor supports Statsd metrics out of the box.  Configure
   `STATSD_HOST` and `STATSD_PORT` in `thumbor.conf`.
 
-## Summary Checklist
+## Summary checklist
 
 - [ ] Strong random HMAC key, shared between Plone and Thumbor
 - [ ] `ALLOW_UNSAFE_URL = False` in Thumbor

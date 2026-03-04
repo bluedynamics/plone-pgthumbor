@@ -6,7 +6,7 @@ This guide covers every `thumbor.conf` setting relevant to the
 plone.pgthumbor stack.  All settings are standard Thumbor configuration keys
 that can also be set via environment variables.
 
-## Minimal Configuration
+## Minimal configuration
 
 ```python
 LOADER = "zodb_pgjsonb_thumborblobloader.loader"
@@ -20,7 +20,7 @@ SECURITY_KEY = "your-secret-key"
 PGTHUMBOR_DSN = "dbname=zodb host=postgres port=5432 user=zodb password=zodb"
 ```
 
-## Loader and Handlers
+## Loader and handlers
 
 ### `LOADER`
 
@@ -89,7 +89,7 @@ ALLOW_UNSAFE_URL = False
 When `True`, Thumbor accepts URLs prefixed with `/unsafe/` without HMAC
 verification.  Useful for development only.
 
-## Result Storage
+## Result storage
 
 ### `RESULT_STORAGE`
 
@@ -105,7 +105,7 @@ The file storage is the simplest option.  For production deployments consider
 `thumbor.result_storages.no_storage` if you rely solely on an upstream CDN
 cache, or a Redis-based result storage for clustered Thumbor setups.
 
-## PostgreSQL Connection
+## PostgreSQL connection
 
 ### `PGTHUMBOR_DSN`
 
@@ -144,7 +144,7 @@ PGTHUMBOR_POOL_MAX_SIZE = 4
 Increase this if Thumbor handles many concurrent image requests.  Each
 connection holds a PostgreSQL backend slot.
 
-## Plone Access Control
+## Plone access control
 
 ### `PGTHUMBOR_PLONE_AUTH_URL`
 
@@ -181,7 +181,7 @@ PGTHUMBOR_AUTH_CACHE_TTL = 60
 Auth results are cached per `(content_zoid, cookie_header)` tuple.  A shorter
 TTL means more frequent Plone round-trips but faster permission revocation.
 
-## Disk Cache (Loader-Side)
+## Disk cache (loader-side)
 
 The loader has its own disk cache, separate from Thumbor's result storage.
 This caches raw blob bytes to avoid repeated PostgreSQL or S3 fetches.
@@ -208,7 +208,7 @@ The cache uses deterministic filenames (`{zoid:016x}-{tid:016x}.blob`).
 Since blobs are addressed by immutable `(zoid, tid)` pairs, there is no
 cache invalidation concern -- only LRU eviction for space.
 
-## S3 Fallback
+## S3 fallback
 
 For tiered blob storage where large blobs are offloaded to S3.  See
 {doc}`enable-s3-fallback` for a detailed setup guide.
@@ -238,7 +238,7 @@ S3-compatible services like MinIO:
 PGTHUMBOR_S3_ENDPOINT = "http://minio:9000"
 ```
 
-## Full Example
+## Full example
 
 ```python
 import os

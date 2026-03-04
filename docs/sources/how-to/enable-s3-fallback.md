@@ -1,13 +1,13 @@
 <!-- diataxis: how-to -->
 
-# Enable S3 Fallback for Large Blobs
+# Enable S3 fallback for large blobs
 
 zodb-pgjsonb supports two-tier blob storage: small blobs are stored inline in
 PostgreSQL (the `data` column of `blob_state` as `bytea`), while large blobs
 can be offloaded to S3 (the `s3_key` column stores the object key).  The
 Thumbor blob loader handles both tiers transparently.
 
-## How Two-Tier Storage Works
+## How two-tier storage works
 
 When the loader fetches a blob from the `blob_state` table, it checks:
 
@@ -46,7 +46,7 @@ export PGTHUMBOR_S3_REGION="eu-central-1"
 export PGTHUMBOR_S3_ENDPOINT=""
 ```
 
-## IAM Credentials
+## IAM credentials
 
 The loader uses boto3's standard credential chain.  In order of precedence:
 

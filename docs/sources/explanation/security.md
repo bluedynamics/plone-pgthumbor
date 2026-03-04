@@ -1,6 +1,6 @@
 <!-- diataxis: explanation -->
 
-# Security Model
+# Security model
 
 plone.pgthumbor sits between two trust boundaries: the browser (untrusted) and the
 image processing pipeline (trusted). Without safeguards, an attacker could request
@@ -57,7 +57,7 @@ transformation abuse.
 set nor `unsafe` is enabled, it returns `None`, which disables Thumbor URL
 generation entirely. Plone falls back to standard image serving.
 
-## Layer 2: Auth handler in Thumbor
+## Layer 2: auth handler in Thumbor
 
 ### The threat
 

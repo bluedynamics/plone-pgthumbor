@@ -1,8 +1,8 @@
 <!-- diataxis: tutorial -->
 
-# Quickstart: Image Scaling with Thumbor in 5 Minutes
+# Quickstart: image scaling with Thumbor in 5 minutes
 
-## What You Will Build
+## What you will build
 
 In this tutorial you will run a Plone 6 site with Thumbor-based image scaling,
 all backed by a single PostgreSQL database.  You will upload an image, see
@@ -20,7 +20,7 @@ becomes a 302 redirect to Thumbor.
 - A terminal
 - About 2 GB free disk space (for Docker images)
 
-## Step 1: Clone the Repository
+## Step 1: clone the repository
 
 ```bash
 git clone https://github.com/bluedynamics/plone-pgthumbor.git
@@ -35,7 +35,7 @@ For development with local source installs, use the `development/` directory
 instead. See {doc}`../how-to/develop` for details.
 :::
 
-## Step 2: Start the Stack
+## Step 2: start the stack
 
 ```bash
 docker compose up -d --build
@@ -68,7 +68,7 @@ docker compose logs -f plone
 Look for the line `Listening on 0.0.0.0:8080`.
 :::
 
-## Step 3: Log In to Plone
+## Step 3: log in to Plone
 
 Open <http://localhost:8080> in your browser.
 
@@ -79,7 +79,7 @@ Log in with the default credentials:
 
 You should see the Plone site root.
 
-## Step 4: Upload an Image
+## Step 4: upload an image
 
 1. Click **Add new...** > **Image** in the toolbar.
 2. Give it a title, for example "Test Image".
@@ -88,7 +88,7 @@ You should see the Plone site root.
 
 Plone displays the image on the content view.
 
-## Step 5: Inspect the Thumbor URL
+## Step 5: inspect the Thumbor URL
 
 Right-click the displayed image and choose **Copy Image Address** (or
 **Open Image in New Tab**).
@@ -110,7 +110,7 @@ Key observations:
 Plone itself returned a **302 redirect** to this URL.  It never read the blob
 data -- Thumbor fetches it directly from the `blob_state` table in PostgreSQL.
 
-## Step 6: Verify Scaling Works
+## Step 6: verify scaling works
 
 Open a new browser tab and paste the Thumbor URL.  You should see the
 scaled image.
@@ -127,7 +127,7 @@ You can test unsigned URLs by prefixing the path with `/unsafe/` instead of
 an HMAC, but only while unsafe mode is enabled.
 :::
 
-## Step 7: Clean Up
+## Step 7: clean up
 
 ```bash
 docker compose down -v
@@ -136,7 +136,7 @@ docker compose down -v
 This removes all containers and the PostgreSQL data volume.  Omit `-v` if you
 want to keep the data for next time.
 
-## What You Learned
+## What you learned
 
 - plone.pgthumbor replaces Plone's `@@images` view with a 302 redirect to
   Thumbor
@@ -146,7 +146,7 @@ want to keep the data for next time.
   and everything else to Plone (with VirtualHostMonster rewriting)
 - HMAC-signed URLs prevent unauthorized image transformations
 
-## Next Steps
+## Next steps
 
 - {doc}`../how-to/install` to install both packages in your own environment
 - {doc}`../how-to/configure-thumbor` for the full list of Thumbor settings

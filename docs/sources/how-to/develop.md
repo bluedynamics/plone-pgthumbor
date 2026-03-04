@@ -1,6 +1,6 @@
 <!-- diataxis: how-to -->
 
-# Set Up a Development Environment
+# Set up a development environment
 
 This guide explains how to run plone-pgthumbor and zodb-pgjsonb-thumborblobloader
 from source for local development and testing.
@@ -11,7 +11,7 @@ from source for local development and testing.
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/) (recommended) or pip
 
-## Clone the Monorepo
+## Clone the monorepo
 
 The development setup lives in the
 [z3blobs](https://github.com/bluedynamics/z3blobs) monorepo which contains
@@ -22,7 +22,7 @@ git clone https://github.com/bluedynamics/z3blobs.git
 cd z3blobs
 ```
 
-## Run the Development Stack
+## Run the development stack
 
 ```bash
 cd sources/plone-pgthumbor/development
@@ -37,7 +37,7 @@ The build context is the monorepo root (`../../..`) so Docker can COPY from
 `sources/plone-pgcatalog/`, `sources/plone-pgthumbor/`, and
 `sources/zodb-pgjsonb-thumborblobloader/`.
 
-## Run Tests
+## Run tests
 
 ### plone-pgthumbor
 
@@ -60,7 +60,7 @@ uv pip install -e ".[test,s3]"
 ZODB_TEST_DSN="dbname=zodb_test user=zodb password=zodb host=localhost port=5434" pytest
 ```
 
-## Build Documentation
+## Build documentation
 
 ```bash
 cd sources/plone-pgthumbor/docs

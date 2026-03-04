@@ -1,6 +1,6 @@
 <!-- diataxis: explanation -->
 
-# Cloud-Native Deployment
+# Cloud-native deployment
 
 The Docker Compose example in the repository demonstrates plone.pgthumbor's
 multi-service architecture with nginx as the reverse proxy. In production, this

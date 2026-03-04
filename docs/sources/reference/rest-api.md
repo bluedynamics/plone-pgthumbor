@@ -1,6 +1,6 @@
 <!-- diataxis: reference -->
 
-# REST API Reference
+# REST API reference
 
 This page documents the `@thumbor-auth` REST API service provided by
 `plone.pgthumbor` and consumed by the Thumbor auth handler in
@@ -39,7 +39,7 @@ caller's effective principals against the object's
 |---|---|---|---|---|
 | `zoid` | Query string | Hexadecimal string | Yes | ZODB OID of the content object to check, encoded as a hex integer (e.g., `1a`). |
 
-### Response Codes
+### Response codes
 
 | Status | Body | Condition |
 |---|---|---|
@@ -52,7 +52,7 @@ caller's effective principals against the object's
 
 All responses have `Content-Type: application/json`.
 
-### SQL Query
+### SQL query
 
 The service executes a single PostgreSQL query against the `object_state`
 table (managed by `zodb-pgjsonb`). It checks whether the JSONB
@@ -70,13 +70,13 @@ integer ZOID parsed from the query string.
 
 No ZODB object loading or security manager switching is required.
 
-## Thumbor Auth Handler (AuthImagingHandler)
+## Thumbor auth handler (AuthImagingHandler)
 
 The `AuthImagingHandler` in `zodb-pgjsonb-thumborblobloader` is the
 consumer of the `@thumbor-auth` endpoint. It runs inside Thumbor as a
 custom handler registered via `HANDLER_LISTS`.
 
-### URL Detection
+### URL detection
 
 The handler inspects the request path to determine the URL format:
 
@@ -87,7 +87,7 @@ The handler inspects the request path to determine the URL format:
   (`blob_zoid/tid`). No auth check is performed; the image is served
   directly.
 
-### Auth Check Flow
+### Auth check flow
 
 For 3-segment URLs, the handler:
 

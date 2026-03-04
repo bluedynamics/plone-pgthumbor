@@ -1,14 +1,14 @@
 <!-- diataxis: reference -->
 
-# Configuration Reference
+# Configuration reference
 
 This page documents all configuration options for the Thumbor image scaling
 integration. Settings are split between the Plone side (`plone.pgthumbor`)
 and the Thumbor side (`zodb-pgjsonb-thumborblobloader`).
 
-## Plone-Side Settings (plone.pgthumbor)
+## Plone-side settings (plone.pgthumbor)
 
-### Environment Variables
+### Environment variables
 
 Environment variables take precedence over Plone registry settings.
 When an environment variable is set, the corresponding registry value is
@@ -24,7 +24,7 @@ If neither `PGTHUMBOR_SECURITY_KEY` nor `PGTHUMBOR_UNSAFE` is set,
 Thumbor URL generation is disabled and Plone falls back to standard
 ZODB-based image scaling.
 
-### Plone Registry (IThumborSettings)
+### Plone registry (IThumborSettings)
 
 These settings are editable through the Plone control panel
 (`@@thumbor-settings`) and stored in `plone.app.registry`. Environment
@@ -38,11 +38,11 @@ variables override these values when set.
 | `smart_cropping` | Bool | `False` | Enable Thumbor smart cropping (OpenCV face/feature detection). Applied to `scale` and `cover` modes. |
 | `paranoid_mode` | Bool | `False` | Always verify image access with Plone for every request, even for publicly accessible content. When disabled, only non-public images use the authenticated 3-segment URL format. |
 
-## Thumbor-Side Settings (zodb-pgjsonb-thumborblobloader)
+## Thumbor-side settings (zodb-pgjsonb-thumborblobloader)
 
 All Thumbor-side settings are configured in `thumbor.conf`.
 
-### Loader and Handler Registration
+### Loader and handler registration
 
 | Key | Value | Description |
 |---|---|---|
@@ -56,7 +56,7 @@ All Thumbor-side settings are configured in `thumbor.conf`.
 | `SECURITY_KEY` | string | (none) | Thumbor's HMAC-SHA1 signing key. Must match `PGTHUMBOR_SECURITY_KEY` on the Plone side. |
 | `ALLOW_UNSAFE_URL` | boolean | `False` | Accept unsigned `/unsafe/` URLs. Must match `PGTHUMBOR_UNSAFE` on the Plone side. |
 
-### PostgreSQL Connection
+### PostgreSQL connection
 
 | Key | Type | Default | Description |
 |---|---|---|---|
@@ -67,7 +67,7 @@ All Thumbor-side settings are configured in `thumbor.conf`.
 The loader uses `psycopg` with `AsyncConnectionPool`. On first use, it
 verifies that the `blob_state` table exists (created by `zodb-pgjsonb`).
 
-### Disk Cache
+### Disk cache
 
 | Key | Type | Default | Description |
 |---|---|---|---|
@@ -78,7 +78,7 @@ Cache filenames are deterministic: `{zoid:016x}-{tid:016x}.blob`. Since
 blobs are addressed by immutable `(zoid, tid)` pairs, there is no cache
 invalidation concern -- only LRU eviction for space management.
 
-### S3 Storage (Optional)
+### S3 storage (optional)
 
 When blob data is stored in S3 (instead of or in addition to PG `bytea`),
 the loader falls back to S3 if the `data` column is `NULL` and `s3_key`
@@ -93,14 +93,14 @@ is present.
 S3 downloads use `boto3` synchronously, wrapped in `asyncio.to_thread`
 for compatibility with Thumbor's async event loop.
 
-### Plone Auth Handler
+### Plone auth handler
 
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `PGTHUMBOR_PLONE_AUTH_URL` | string | `""` | Internal URL of the Plone site (e.g., `http://plone-internal:8080/Plone`). Used by the auth handler to call `@thumbor-auth`. Required for 3-segment authenticated URLs. |
 | `PGTHUMBOR_AUTH_CACHE_TTL` | integer | `60` | Auth result cache lifetime in seconds. Cached per `(content_zoid, cookie)` pair to avoid a Plone round-trip on every image request. |
 
-### Result Storage (Optional)
+### Result storage (optional)
 
 Thumbor's built-in result storage caches the final processed images.
 This is separate from the blob disk cache (which caches raw originals).

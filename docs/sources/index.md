@@ -66,7 +66,7 @@ a Thumbor 7 loader that reads blobs directly from PostgreSQL.
 
 ::::
 
-## Quick Start
+## Quick start
 
 1. {doc}`Install plone.pgthumbor and thumborblobloader <how-to/install>`
 2. {doc}`Run the Docker quickstart <tutorials/quickstart-docker>` (Plone + Thumbor + PostgreSQL in 5 minutes)

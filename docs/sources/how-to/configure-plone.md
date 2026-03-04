@@ -1,6 +1,6 @@
 <!-- diataxis: how-to -->
 
-# Configure Plone Settings
+# Configure Plone settings
 
 plone.pgthumbor reads its configuration from environment variables.
 A Plone registry schema (`IThumborSettings`) is also available for settings
@@ -8,7 +8,7 @@ that do not change per deployment.
 
 **Environment variables always take precedence over registry values.**
 
-## Environment Variables
+## Environment variables
 
 Set these before starting Zope.
 
@@ -67,7 +67,7 @@ image transformations, consuming server resources and potentially exposing
 private images.
 :::
 
-## Plone Registry Settings
+## Plone registry settings
 
 The `IThumborSettings` registry schema provides the following fields.  They
 serve as fallback values when the corresponding environment variable is not
@@ -121,7 +121,7 @@ better performance.
 - Type: `Bool`
 - Default: `False`
 
-## Configuration Precedence
+## Configuration precedence
 
 The configuration is resolved in `plone.pgthumbor.config.get_thumbor_config()`:
 
@@ -142,7 +142,7 @@ plone:
     PGTHUMBOR_SECURITY_KEY: "your-strong-random-key"
 ```
 
-## Example: systemd Unit
+## Example: systemd unit
 
 In a systemd service file:
 

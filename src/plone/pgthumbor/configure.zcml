@@ -34,6 +34,14 @@
       permission="cmf.ManagePortal"
       />
 
+  <!-- One-time purge of legacy ZODB image scales -->
+  <browser:page
+      name="thumbor-purge-scales"
+      for="Products.CMFPlone.interfaces.IPloneSiteRoot"
+      class=".purge_scales.PurgeScalesView"
+      permission="cmf.ManagePortal"
+      />
+
   <!-- Setup endpoint (registers registry records in-process) -->
   <browser:page
       name="thumbor-setup"

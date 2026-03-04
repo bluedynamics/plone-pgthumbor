@@ -1,8 +1,9 @@
 """Purge legacy ZODB image scales after plone.pgthumbor installation.
 
 One-time cleanup script that removes all plone.scale annotation data
-from content objects. After plone.pgthumbor is active, Thumbor handles
-all image scaling — the old ZODB-stored scales just waste storage space.
+from content objects and reindexes the image_scales catalog metadata.
+After plone.pgthumbor is active, Thumbor handles all image scaling —
+the old ZODB-stored scales just waste storage space.
 
 Usage with zconsole::
 
@@ -29,19 +30,24 @@ ANNOTATION_KEY = "plone.scale"
 
 
 def purge_scales(portal, batch_size=500):
-    """Remove plone.scale annotations from all content objects.
+    """Remove plone.scale annotations and reindex image_scales metadata.
 
     Walks the catalog, checks each object for scale annotations,
-    and deletes them. Commits in batches to avoid unbounded memory use.
+    deletes them, and reindexes image_scales so the catalog metadata
+    reflects the new Thumbor-based scale storage.
 
-    Returns (purged_count, skipped_count, total_count).
+    Commits in batches to avoid unbounded memory use.
+
+    Returns (purged_count, reindexed_count, skipped_count, total_count).
     """
     catalog = portal.portal_catalog
     brains = catalog.unrestrictedSearchResults()
     total = len(brains)
 
     purged = 0
+    reindexed = 0
     skipped = 0
+    changed = 0
 
     for brain in brains:
         try:
@@ -63,21 +69,49 @@ def purge_scales(portal, batch_size=500):
         if ANNOTATION_KEY in annotations:
             del annotations[ANNOTATION_KEY]
             purged += 1
+            changed += 1
 
-        if purged > 0 and purged % batch_size == 0:
+        # Reindex image_scales metadata if the catalog has it
+        if _has_image_scales_metadata(catalog):
+            try:
+                obj.reindexObject(idxs=["image_scales"])
+                reindexed += 1
+                changed += 1
+            except Exception:
+                logger.debug(
+                    "Could not reindex image_scales for %s",
+                    brain.getPath(),
+                    exc_info=True,
+                )
+
+        if changed > 0 and changed % batch_size == 0:
             transaction.commit()
-            logger.info("Purged %d/%d objects so far...", purged, total)
+            logger.info(
+                "Progress: %d purged, %d reindexed of %d...",
+                purged,
+                reindexed,
+                total,
+            )
 
-    if purged > 0:
+    if changed > 0:
         transaction.commit()
 
     logger.info(
-        "Done. Purged scales from %d objects (%d skipped, %d total).",
+        "Done. Purged %d, reindexed %d (%d skipped, %d total).",
         purged,
+        reindexed,
         skipped,
         total,
     )
-    return purged, skipped, total
+    return purged, reindexed, skipped, total
+
+
+def _has_image_scales_metadata(catalog):
+    """Check if the catalog has image_scales in its schema (metadata columns)."""
+    try:
+        return "image_scales" in catalog.schema()
+    except Exception:
+        return False
 
 
 class PurgeScalesView:
@@ -88,10 +122,11 @@ class PurgeScalesView:
         self.request = request
 
     def __call__(self):
-        purged, skipped, total = purge_scales(self.context)
+        purged, reindexed, skipped, total = purge_scales(self.context)
         self.request.response.setHeader("Content-Type", "text/plain")
         return (
-            f"Purged scales from {purged} objects ({skipped} skipped, {total} total)."
+            f"Purged {purged}, reindexed {reindexed} "
+            f"({skipped} skipped, {total} total)."
         )
 
 
@@ -111,10 +146,11 @@ def main(app, args):
     newSecurityManager(None, admin.__of__(app.acl_users))
 
     portal = app[site_id]
-    purged, skipped, total = purge_scales(portal)
+    purged, reindexed, skipped, total = purge_scales(portal)
     logger.info(
-        "Purged scales from %d objects (%d skipped, %d total).",
+        "Purged %d, reindexed %d (%d skipped, %d total).",
         purged,
+        reindexed,
         skipped,
         total,
     )

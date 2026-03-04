@@ -3,7 +3,7 @@
 ## 0.2.0 (unreleased)
 
 - Add `@@thumbor-purge-scales` view and `zconsole run -m` script to remove
-  legacy ZODB image scales after installation.
+  legacy ZODB image scales and reindex `image_scales` metadata after installation.
 
 ## 0.1.0
 

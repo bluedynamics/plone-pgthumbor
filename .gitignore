@@ -33,3 +33,5 @@ docs/_build/
 docs/html/
 docs/.mxmake/
 docs/.venv/
+docs/.vale/styles/Microsoft/
+docs/.vale/styles/write-good/

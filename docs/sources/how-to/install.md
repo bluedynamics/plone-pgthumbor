@@ -83,7 +83,8 @@ See {doc}`configure-thumbor` for the full list of settings.
 
 ## Set Plone environment variables
 
-Plone needs to know where to point image URLs.  Set these environment variables
+Plone needs to know where to point image URLs.
+Set these environment variables
 before starting Zope:
 
 ```bash
@@ -107,32 +108,39 @@ setup_tool.runAllImportStepsFromProfile("profile-plone.pgthumbor:default")
 The profile registers the `@@images` override and the `@thumbor-auth` REST
 service.
 
-plone.pgthumbor is auto-discovered via `z3c.autoinclude` -- no `%import`
+plone.pgthumbor is autodiscovered via `z3c.autoinclude` -- no `%import`
 is needed in `zope.conf`.
 
 ## Verify installation
 
-1. Start Thumbor:
+1.
+Start Thumbor:
 
    ```bash
    thumbor --conf=/etc/thumbor.conf
    ```
 
-2. Start Zope:
+2.
+Start Zope:
 
    ```bash
    runwsgi instance/etc/zope.ini
    ```
 
-3. Upload an image in Plone.  Right-click the displayed image and inspect the
-   URL.  It should point to your Thumbor server (the value of
+3.
+Upload an image in Plone.
+Right-click the displayed image and inspect the
+   URL.
+   It should point to your Thumbor server (the value of
    `PGTHUMBOR_SERVER_URL`) with an HMAC signature and blob coordinates:
 
    ```
    http://localhost:8080/thumbor/<hmac>/400x300/<zoid_hex>/<tid_hex>
    ```
 
-4. Open the URL in a new tab.  You should see the scaled image.
+4.
+Open the URL in a new tab.
+You should see the scaled image.
 
 If the image does not load, check:
 

@@ -21,7 +21,8 @@ This key must be shared between Plone and Thumbor:
 | Thumbor | `SECURITY_KEY` in `thumbor.conf` (or `THUMBOR_SECURITY_KEY` env var) |
 
 Store the key in a secrets manager (Vault, AWS Secrets Manager, Docker
-secrets).  Never commit it to version control.
+secrets).
+Never commit it to version control.
 
 ## Disable unsafe mode
 
@@ -35,7 +36,8 @@ On the Plone side, do **not** set `PGTHUMBOR_UNSAFE=true`.
 
 ## Reverse proxy configuration
 
-Thumbor should not be directly exposed to the internet.  Place it behind a
+Thumbor should not be directly exposed to the internet.
+Place it behind a
 reverse proxy (nginx, Traefik, Caddy).
 
 ### nginx example
@@ -95,7 +97,8 @@ thumbor:
 ## Internal network for auth requests
 
 The `auth_handler` in Thumbor calls Plone's `@thumbor-auth` endpoint to verify
-access for non-public images.  This must be an internal, direct URL that
+access for non-public images.
+This must be an internal, direct URL that
 bypasses the reverse proxy:
 
 ```python
@@ -111,7 +114,8 @@ Reasons:
 - Allows network-level isolation (Thumbor and Plone on the same Docker network
   or internal subnet).
 
-In Docker Compose, both services share a network by default.  In Kubernetes,
+In Docker Compose, both services share a network by default.
+In Kubernetes,
 use the service DNS name (for example `http://plone-service:8080/Plone`).
 
 ## HTTPS
@@ -127,7 +131,8 @@ All traffic between the browser and the reverse proxy must use HTTPS.
 
 ## Thumbor result storage
 
-Thumbor caches already-scaled images in its result storage.  For production:
+Thumbor caches already-scaled images in its result storage.
+For production:
 
 **File storage** (single-node deployments):
 
@@ -151,14 +156,15 @@ result cache is unnecessary.
 ## Blob disk cache sizing
 
 The loader-side disk cache (`PGTHUMBOR_CACHE_DIR` / `PGTHUMBOR_CACHE_MAX_SIZE`)
-caches raw blob bytes before Thumbor processes them.  This is especially
+caches raw blob bytes before Thumbor processes them.
+This is especially
 useful when the same source image is requested at multiple sizes.
 
 Sizing guidelines:
 
 - Estimate the total size of your most frequently accessed images.
 - A 1--5 GB cache is a good starting point for most sites.
-- The cache uses LRU eviction based on access time.  It evicts down to 90% of
+- The cache uses LRU eviction based on access time. It evicts down to 90% of
   `PGTHUMBOR_CACHE_MAX_SIZE` when the limit is hit.
 
 ```python
@@ -169,7 +175,8 @@ PGTHUMBOR_CACHE_MAX_SIZE = 5368709120  # 5 GB
 ## Connection pool sizing
 
 The default pool settings (`PGTHUMBOR_POOL_MIN_SIZE=1`,
-`PGTHUMBOR_POOL_MAX_SIZE=4`) work for low-traffic sites.  For higher
+`PGTHUMBOR_POOL_MAX_SIZE=4`) work for low-traffic sites.
+For higher
 concurrency:
 
 ```python
@@ -177,13 +184,15 @@ PGTHUMBOR_POOL_MIN_SIZE = 2
 PGTHUMBOR_POOL_MAX_SIZE = 16
 ```
 
-Each connection uses one PostgreSQL backend slot.  Make sure
+Each connection uses one PostgreSQL backend slot.
+Make sure
 `max_connections` in `postgresql.conf` has enough headroom for all services.
 
 ## Auth cache TTL
 
 The default `PGTHUMBOR_AUTH_CACHE_TTL=60` means that permission changes take
-up to 60 seconds to take effect for cached images.  Adjust based on your
+up to 60 seconds to take effect for cached images.
+Adjust based on your
 security requirements:
 
 - **Strict:** `10` -- near-real-time permission enforcement, more Plone
@@ -193,11 +202,12 @@ security requirements:
 ## Monitoring
 
 - **Health check:** Thumbor exposes `/healthcheck` when
-  `thumbor.handler_lists.healthcheck` is in `HANDLER_LISTS`.  Use this for
+  `thumbor.handler_lists.healthcheck` is in `HANDLER_LISTS`.
+  Use this for
   load balancer probes.
 - **Logs:** Monitor Thumbor logs for `SchemaError` (missing `blob_state`
   table), pool connection failures, and S3 download errors.
-- **Metrics:** Thumbor supports Statsd metrics out of the box.  Configure
+- **Metrics:** Thumbor supports Statsd metrics out of the box. Configure
   `STATSD_HOST` and `STATSD_PORT` in `thumbor.conf`.
 
 ## Summary checklist

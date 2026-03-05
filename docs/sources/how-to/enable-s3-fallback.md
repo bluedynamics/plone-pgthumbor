@@ -4,7 +4,8 @@
 
 zodb-pgjsonb supports two-tier blob storage: small blobs are stored inline in
 PostgreSQL (the `data` column of `blob_state` as `bytea`), while large blobs
-can be offloaded to S3 (the `s3_key` column stores the object key).  The
+can be offloaded to S3 (the `s3_key` column stores the object key).
+The
 Thumbor blob loader handles both tiers transparently.
 
 ## How two-tier storage works
@@ -12,14 +13,16 @@ Thumbor blob loader handles both tiers transparently.
 When the loader fetches a blob from the `blob_state` table, it checks:
 
 1. **`data` column (PostgreSQL bytea)** -- If not null, the blob bytes are
-   returned directly from PostgreSQL.  This is the preferred path for
+   returned directly from PostgreSQL.
+   This is the preferred path for
    performance.
 2. **`s3_key` column** -- If `data` is null but `s3_key` is set, the loader
    downloads the blob from S3 using boto3.
 3. **Neither** -- If both are null, the loader returns a 500 error (this
    should not happen in normal operation).
 
-PostgreSQL is always checked first.  S3 is only used as a fallback when the
+PostgreSQL is always checked first.
+S3 is only used as a fallback when the
 `data` column is null.
 
 ## Configure Thumbor
@@ -48,7 +51,8 @@ export PGTHUMBOR_S3_ENDPOINT=""
 
 ## IAM credentials
 
-The loader uses boto3's standard credential chain.  In order of precedence:
+The loader uses boto3's standard credential chain.
+In order of precedence:
 
 1. **Environment variables:** `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
    `AWS_SESSION_TOKEN`
@@ -94,7 +98,8 @@ export PGTHUMBOR_S3_ENDPOINT="http://minio:9000"
 ## Disk Cache with S3
 
 When both S3 and the disk cache are enabled, the loader caches S3-fetched
-blobs locally.  Subsequent requests for the same blob are served from disk
+blobs locally.
+Subsequent requests for the same blob are served from disk
 without an S3 round-trip:
 
 ```python
@@ -110,8 +115,10 @@ significantly higher than local disk reads.
 
 ## Verify S3 Fallback
 
-1. Upload a large image to Plone.
-2. Confirm the blob row exists in PostgreSQL:
+1.
+Upload a large image to Plone.
+2.
+Confirm the blob row exists in PostgreSQL:
 
    ```sql
    SELECT zoid, tid, blob_size, data IS NOT NULL AS has_data, s3_key
@@ -120,13 +127,17 @@ significantly higher than local disk reads.
    LIMIT 5;
    ```
 
-3. For a blob stored in S3, the `has_data` column will be `false` and
+3.
+For a blob stored in S3, the `has_data` column will be `false` and
    `s3_key` will contain the S3 object key.
 
-4. Request the image through Thumbor.  The loader fetches it from S3 and
+4.
+Request the image through Thumbor.
+The loader fetches it from S3 and
    caches it locally (if disk cache is enabled).
 
-5. Check Thumbor logs for any S3 download errors:
+5.
+Check Thumbor logs for any S3 download errors:
 
    ```
    ERROR:zodb_pgjsonb_thumborblobloader.s3:S3 download failed for key=...: NoSuchKey

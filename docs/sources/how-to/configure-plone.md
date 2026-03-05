@@ -14,8 +14,10 @@ Set these before starting Zope.
 
 ### `PGTHUMBOR_SERVER_URL` (required)
 
-The public, browser-facing URL of the Thumbor server.  Plone uses this as the
-base URL when generating image `src` attributes.  It must be reachable from
+The public, browser-facing URL of the Thumbor server.
+Plone uses this as the
+base URL when generating image `src` attributes.
+It must be reachable from
 the end user's browser:
 
 ```bash
@@ -36,7 +38,8 @@ If this variable is empty, plone.pgthumbor is effectively disabled -- the
 
 ### `PGTHUMBOR_SECURITY_KEY` (required unless unsafe mode)
 
-The HMAC-SHA1 key used to sign Thumbor URLs.  Must match the `SECURITY_KEY`
+The HMAC-SHA1 key used to sign Thumbor URLs.
+Must match the `SECURITY_KEY`
 in `thumbor.conf`:
 
 ```bash
@@ -54,29 +57,36 @@ Enable unsigned `/unsafe/` URLs.  **Development only.**
 export PGTHUMBOR_UNSAFE="true"
 ```
 
-Accepted values: `true`, `1`, `yes` (case-insensitive).  All other values are
+Accepted values: `true`, `1`, `yes` (case-insensitive).
+All other values are
 treated as `false`.
 
 When enabled, Plone generates unsigned URLs prefixed with `/unsafe/` instead
-of an HMAC signature.  Thumbor must also have `ALLOW_UNSAFE_URL = True` for
+of an HMAC signature.
+Thumbor must also have `ALLOW_UNSAFE_URL = True` for
 these to work.
 
 :::{warning}
-Never enable unsafe mode in production.  It allows anyone to request arbitrary
+Never enable unsafe mode in production.
+It allows anyone to request arbitrary
 image transformations, consuming server resources and potentially exposing
 private images.
 :::
 
 ## Plone registry settings
 
-The `IThumborSettings` registry schema provides the following fields.  They
+The `IThumborSettings` registry schema provides the following fields.
+They
 serve as fallback values when the corresponding environment variable is not
-set.  Configure them in **Site Setup > Thumbor Settings** or programmatically
+set.
+Configure them in **Site Setup > Thumbor Settings** or programmatically
 via the Plone registry.
 
 ### `server_url`
 
-Thumbor server URL.  Same role as `PGTHUMBOR_SERVER_URL`.  The environment
+Thumbor server URL.
+Same role as `PGTHUMBOR_SERVER_URL`.
+The environment
 variable takes precedence.
 
 - Type: `TextLine`
@@ -84,7 +94,9 @@ variable takes precedence.
 
 ### `security_key`
 
-Shared HMAC key.  Same role as `PGTHUMBOR_SECURITY_KEY`.  The environment
+Shared HMAC key.
+Same role as `PGTHUMBOR_SECURITY_KEY`.
+The environment
 variable takes precedence.
 
 - Type: `TextLine`
@@ -92,7 +104,9 @@ variable takes precedence.
 
 ### `unsafe`
 
-Unsafe mode.  Same role as `PGTHUMBOR_UNSAFE`.  The environment variable takes
+Unsafe mode.
+Same role as `PGTHUMBOR_UNSAFE`.
+The environment variable takes
 precedence.
 
 - Type: `Bool`
@@ -100,8 +114,10 @@ precedence.
 
 ### `smart_cropping`
 
-Enable Thumbor smart cropping.  When enabled, Plone appends the `/smart/`
-filter to Thumbor URLs.  Thumbor uses OpenCV-based face and feature detection
+Enable Thumbor smart cropping.
+When enabled, Plone appends the `/smart/`
+filter to Thumbor URLs.
+Thumbor uses OpenCV-based face and feature detection
 to choose a focal point for cropping.
 
 - Type: `Bool`
@@ -115,7 +131,8 @@ Thumbor's `auth_handler` then verifies with Plone that the requesting user has
 `View` permission on the content object.
 
 When disabled (default), only images on non-public content use the 3-segment
-format.  Public images use the 2-segment format and skip the auth check for
+format.
+Public images use the 2-segment format and skip the auth check for
 better performance.
 
 - Type: `Bool`
@@ -125,10 +142,13 @@ better performance.
 
 The configuration is resolved in `plone.pgthumbor.config.get_thumbor_config()`:
 
-1. Environment variables are checked first.
-2. If `PGTHUMBOR_SERVER_URL` is empty, the function returns `None`
+1.
+Environment variables are checked first.
+2.
+If `PGTHUMBOR_SERVER_URL` is empty, the function returns `None`
    (Thumbor integration disabled).
-3. If neither `PGTHUMBOR_SECURITY_KEY` nor `PGTHUMBOR_UNSAFE` is set,
+3.
+If neither `PGTHUMBOR_SECURITY_KEY` nor `PGTHUMBOR_UNSAFE` is set,
    a warning is logged and the function returns `None`.
 
 ## Example: Docker Compose

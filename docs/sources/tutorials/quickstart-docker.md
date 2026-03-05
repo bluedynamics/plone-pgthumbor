@@ -5,7 +5,8 @@
 ## What you will build
 
 In this tutorial you will run a Plone 6 site with Thumbor-based image scaling,
-all backed by a single PostgreSQL database.  You will upload an image, see
+all backed by a single PostgreSQL database.
+You will upload an image, see
 Plone redirect to a signed Thumbor URL, and verify that Thumbor scales the
 image on the fly.
 
@@ -32,7 +33,8 @@ This setup installs all packages from PyPI -- no source checkout required.
 
 :::{note}
 For development with local source installs, use the `development/` directory
-instead. See {doc}`../how-to/develop` for details.
+instead.
+See {doc}`../how-to/develop` for details.
 :::
 
 ## Step 2: start the stack
@@ -81,10 +83,14 @@ You should see the Plone site root.
 
 ## Step 4: upload an image
 
-1. Click **Add new...** > **Image** in the toolbar.
-2. Give it a title, for example "Test Image".
-3. Choose any JPEG or PNG file from your computer.
-4. Click **Save**.
+1.
+Click **Add new...** > **Image** in the toolbar.
+2.
+Give it a title, for example "Test Image."
+3.
+Choose any JPEG or PNG file from your computer.
+4.
+Click **Save**.
 
 Plone displays the image on the content view.
 
@@ -107,22 +113,27 @@ Key observations:
 - `300x200` (or similar) is the target size Plone requested.
 - `<zoid_hex>/<tid_hex>` identifies the blob in PostgreSQL.
 
-Plone itself returned a **302 redirect** to this URL.  It never read the blob
+Plone itself returned a **302 redirect** to this URL.
+It never read the blob
 data -- Thumbor fetches it directly from the `blob_state` table in PostgreSQL.
 
 ## Step 6: verify scaling works
 
-Open a new browser tab and paste the Thumbor URL.  You should see the
+Open a new browser tab and paste the Thumbor URL.
+You should see the
 scaled image.
 
-Try modifying the size in the URL manually.  For example, change `300x200` to
+Try modifying the size in the URL manually.
+For example, change `300x200` to
 `100x100` -- Thumbor will return a 403 Forbidden because the new URL has an
-invalid HMAC signature.  This proves that the security key prevents arbitrary
+invalid HMAC signature.
+This proves that the security key prevents arbitrary
 transformations.
 
 :::{tip}
 The example stack sets `ALLOW_UNSAFE_URL=True` in the Thumbor container
-environment.  In production this must be `False` -- all URLs must be signed.
+environment.
+In production this must be `False` -- all URLs must be signed.
 You can test unsigned URLs by prefixing the path with `/unsafe/` instead of
 an HMAC, but only while unsafe mode is enabled.
 :::
@@ -133,7 +144,8 @@ an HMAC, but only while unsafe mode is enabled.
 docker compose down -v
 ```
 
-This removes all containers and the PostgreSQL data volume.  Omit `-v` if you
+This removes all containers and the PostgreSQL data volume.
+Omit `-v` if you
 want to keep the data for next time.
 
 ## What you learned

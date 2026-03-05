@@ -27,7 +27,8 @@ http://thumbor:8888/Ab3xY.../300x200/fit-in/smart/2a/ff
 
 ### 3-Segment (Authenticated)
 
-Used for access-controlled images. Appends the content object's ZOID so
+Used for access-controlled images.
+Appends the content object's ZOID so
 the Thumbor auth handler can verify Plone permissions before delivery.
 
 ```
@@ -65,7 +66,8 @@ replaced with the literal string `unsafe`:
 ## HMAC-SHA1 Signing
 
 URLs are signed using `libthumbor.CryptoURL` with the shared
-`security_key`. The signing covers the entire path after the server URL
+`security_key`.
+The signing covers the entire path after the server URL
 (operations, image path, and all parameters). Thumbor validates the
 signature before processing the request.
 
@@ -85,12 +87,14 @@ Plone scale modes are mapped to Thumbor parameters by
 | `contain` | `True` | `False` | Fits image within the requested dimensions. Smart cropping is always disabled. |
 
 The `smart_cropping` column reflects the `smart_cropping` boolean from
-the Plone registry (`IThumborSettings`). When `smart_cropping` is
+the Plone registry (`IThumborSettings`).
+When `smart_cropping` is
 `False`, the `smart` parameter is `False` for all modes.
 
 ## SVG Handling
 
-SVG images (`image/svg+xml`) bypass Thumbor entirely. The
+SVG images (`image/svg+xml`) bypass Thumbor entirely.
+The
 `ThumborImageScale` detects the content type and falls back to standard
 Plone image scaling, which serves SVGs directly without transformation.
 
@@ -99,12 +103,17 @@ Plone image scaling, which serves SVGs directly without transformation.
 The `get_blob_ids()` function in `blob.py` extracts `(zoid, tid)` from a
 `NamedBlobImage` or `NamedBlobFile` object:
 
-1. Accesses `named_image._blob` to get the underlying ZODB `Blob`.
-2. Reads `_p_oid` for the blob's OID.
-3. Calls `_p_activate()` to ensure the blob's state is loaded (ghost
+1.
+Accesses `named_image._blob` to get the underlying ZODB `Blob`.
+2.
+Reads `_p_oid` for the blob's OID.
+3.
+Calls `_p_activate()` to ensure the blob's state is loaded (ghost
    objects have `_p_serial` set to `z64`).
-4. Reads `_p_serial` for the committed transaction ID.
-5. Converts both 8-byte values to integers via `ZODB.utils.u64`.
+4.
+Reads `_p_serial` for the committed transaction ID.
+5.
+Converts both 8-byte values to integers via `ZODB.utils.u64`.
 
 Returns `None` if the blob is missing, has no OID, or has never been
 committed.

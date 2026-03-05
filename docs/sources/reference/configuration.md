@@ -3,7 +3,8 @@
 # Configuration reference
 
 This page documents all configuration options for the Thumbor image scaling
-integration. Settings are split between the Plone side (`plone.pgthumbor`)
+integration.
+Settings are split between the Plone side (`plone.pgthumbor`)
 and the Thumbor side (`zodb-pgjsonb-thumborblobloader`).
 
 ## Plone-side settings (plone.pgthumbor)
@@ -16,7 +17,7 @@ ignored.
 
 | Variable | Type | Default | Description |
 |---|---|---|---|
-| `PGTHUMBOR_SERVER_URL` | string | (none) | Public URL of the Thumbor server (e.g., `http://thumbor:8888`). Required for Thumbor URL generation. Trailing slashes are stripped automatically. |
+| `PGTHUMBOR_SERVER_URL` | string | (none) | Public URL of the Thumbor server (for example, `http://thumbor:8888`). Required for Thumbor URL generation. Trailing slashes are stripped automatically. |
 | `PGTHUMBOR_SECURITY_KEY` | string | `""` | Shared HMAC-SHA1 key for signing Thumbor URLs. Must match the `SECURITY_KEY` in `thumbor.conf`. Required unless `PGTHUMBOR_UNSAFE` is enabled. |
 | `PGTHUMBOR_UNSAFE` | boolean | `false` | Generate unsigned `/unsafe/` URLs. Accepts `true`, `1`, or `yes` (case-insensitive). For development only. |
 
@@ -60,11 +61,12 @@ All Thumbor-side settings are configured in `thumbor.conf`.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `PGTHUMBOR_DSN` | string | (required) | PostgreSQL connection string (e.g., `dbname=zodb host=localhost port=5432 user=zodb password=zodb`). |
+| `PGTHUMBOR_DSN` | string | (required) | PostgreSQL connection string (for example, `dbname=zodb host=localhost port=5432 user=zodb password=zodb`). |
 | `PGTHUMBOR_POOL_MIN_SIZE` | integer | `1` | Minimum number of connections in the async connection pool. |
 | `PGTHUMBOR_POOL_MAX_SIZE` | integer | `4` | Maximum number of connections in the async connection pool. |
 
-The loader uses `psycopg` with `AsyncConnectionPool`. On first use, it
+The loader uses `psycopg` with `AsyncConnectionPool`.
+On first use, it
 verifies that the `blob_state` table exists (created by `zodb-pgjsonb`).
 
 ### Disk cache
@@ -74,7 +76,8 @@ verifies that the `blob_state` table exists (created by `zodb-pgjsonb`).
 | `PGTHUMBOR_CACHE_DIR` | string | `""` | Directory for the local blob cache. Empty string disables caching. |
 | `PGTHUMBOR_CACHE_MAX_SIZE` | integer | `0` | Maximum cache size in bytes. `0` disables caching. When the cache exceeds this size, the oldest files (by access time) are evicted until the cache reaches 90% of the limit. |
 
-Cache filenames are deterministic: `{zoid:016x}-{tid:016x}.blob`. Since
+Cache filenames are deterministic: `{zoid:016x}-{tid:016x}.blob`.
+Since
 blobs are addressed by immutable `(zoid, tid)` pairs, there is no cache
 invalidation concern -- only LRU eviction for space management.
 
@@ -97,7 +100,7 @@ for compatibility with Thumbor's async event loop.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `PGTHUMBOR_PLONE_AUTH_URL` | string | `""` | Internal URL of the Plone site (e.g., `http://plone-internal:8080/Plone`). Used by the auth handler to call `@thumbor-auth`. Required for 3-segment authenticated URLs. |
+| `PGTHUMBOR_PLONE_AUTH_URL` | string | `""` | Internal URL of the Plone site (for example, `http://plone-internal:8080/Plone`). Used by the auth handler to call `@thumbor-auth`. Required for 3-segment authenticated URLs. |
 | `PGTHUMBOR_AUTH_CACHE_TTL` | integer | `60` | Auth result cache lifetime in seconds. Cached per `(content_zoid, cookie)` pair to avoid a Plone round-trip on every image request. |
 
 ### Result storage (optional)
@@ -107,5 +110,5 @@ This is separate from the blob disk cache (which caches raw originals).
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `RESULT_STORAGE` | string | (none) | Result storage backend, e.g., `'thumbor.result_storages.file_storage'`. |
+| `RESULT_STORAGE` | string | (none) | Result storage backend, for example, `'thumbor.result_storages.file_storage'`. |
 | `RESULT_STORAGE_FILE_STORAGE_ROOT_PATH` | string | (none) | Directory for file-based result storage. |

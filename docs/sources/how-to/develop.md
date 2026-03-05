@@ -30,7 +30,8 @@ docker compose up -d --build
 ```
 
 Unlike the `tryout/` setup (which installs from PyPI), the development stack
-mounts local source directories. Changes to `sources/plone-pgthumbor/` and
+mounts local source directories.
+Changes to `sources/plone-pgthumbor/` and
 `sources/zodb-pgjsonb-thumborblobloader/` are picked up on container rebuild.
 
 The build context is the monorepo root (`../../..`) so Docker can COPY from
@@ -67,5 +68,6 @@ cd sources/plone-pgthumbor/docs
 make docs
 ```
 
-The HTML output is in `html/`. Use `make docs-live` for live-reload during
+The HTML output is in `html/`.
+Use `make docs-live` for live-reload during
 writing.

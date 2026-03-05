@@ -3,7 +3,8 @@
 # Configure Thumbor for plone.pgthumbor
 
 This guide covers every `thumbor.conf` setting relevant to the
-plone.pgthumbor stack.  All settings are standard Thumbor configuration keys
+plone.pgthumbor stack.
+All settings are standard Thumbor configuration keys
 that can also be set via environment variables.
 
 ## Minimal configuration
@@ -24,7 +25,8 @@ PGTHUMBOR_DSN = "dbname=zodb host=postgres port=5432 user=zodb password=zodb"
 
 ### `LOADER`
 
-The image loader module.  Must be set to the zodb-pgjsonb blob loader:
+The image loader module.
+Must be set to the zodb-pgjsonb blob loader:
 
 ```python
 LOADER = "zodb_pgjsonb_thumborblobloader.loader"
@@ -35,7 +37,8 @@ PostgreSQL using an async connection pool (psycopg 3).
 
 ### `HANDLER_LISTS`
 
-Custom Thumbor handler lists.  The `auth_handler` module adds access control
+Custom Thumbor handler lists.
+The `auth_handler` module adds access control
 for non-public Plone content:
 
 ```python
@@ -51,14 +54,16 @@ the image URL regex.
 
 The `auth_handler` intercepts requests with 3-segment blob paths
 (`<blob_zoid>/<tid>/<content_zoid>`) and verifies access with Plone via the
-`@thumbor-auth` REST endpoint before delivering the image.  Two-segment paths
+`@thumbor-auth` REST endpoint before delivering the image.
+Two-segment paths
 (`<blob_zoid>/<tid>`) are served without any access check.
 
 ## Security
 
 ### `SECURITY_KEY`
 
-The shared HMAC-SHA1 key for signing Thumbor URLs.  Plone uses this key to
+The shared HMAC-SHA1 key for signing Thumbor URLs.
+Plone uses this key to
 generate signed URLs; Thumbor uses it to verify them:
 
 ```python
@@ -73,7 +78,8 @@ SECURITY_KEY = os.environ.get("THUMBOR_SECURITY_KEY", "")
 ```
 
 :::{warning}
-Use a strong, random key in production (at least 32 characters).  The key
+Use a strong, random key in production (at least 32 characters).
+The key
 must be identical in Thumbor's `SECURITY_KEY` and Plone's
 `PGTHUMBOR_SECURITY_KEY` environment variable.
 :::
@@ -87,13 +93,15 @@ ALLOW_UNSAFE_URL = False
 ```
 
 When `True`, Thumbor accepts URLs prefixed with `/unsafe/` without HMAC
-verification.  Useful for development only.
+verification.
+Useful for development only.
 
 ## Result storage
 
 ### `RESULT_STORAGE`
 
-Thumbor's built-in result cache.  Stores already-transformed images so
+Thumbor's built-in result cache.
+Stores already-transformed images so
 repeated requests skip re-processing:
 
 ```python
@@ -101,7 +109,8 @@ RESULT_STORAGE = "thumbor.result_storages.file_storage"
 RESULT_STORAGE_FILE_STORAGE_ROOT_PATH = "/tmp/thumbor/result_storage"
 ```
 
-The file storage is the simplest option.  For production deployments consider
+The file storage is the simplest option.
+For production deployments consider
 `thumbor.result_storages.no_storage` if you rely solely on an upstream CDN
 cache, or a Redis-based result storage for clustered Thumbor setups.
 
@@ -109,7 +118,8 @@ cache, or a Redis-based result storage for clustered Thumbor setups.
 
 ### `PGTHUMBOR_DSN`
 
-PostgreSQL connection string for the `blob_state` table.  Uses libpq
+PostgreSQL connection string for the `blob_state` table.
+Uses libpq
 connection string format:
 
 ```python
@@ -127,7 +137,8 @@ The loader verifies that the `blob_state` table exists on first connection.
 
 ### `PGTHUMBOR_POOL_MIN_SIZE`
 
-Minimum number of connections in the async connection pool.  Default: `1`.
+Minimum number of connections in the async connection pool.
+Default: `1`.
 
 ```python
 PGTHUMBOR_POOL_MIN_SIZE = 1
@@ -135,13 +146,15 @@ PGTHUMBOR_POOL_MIN_SIZE = 1
 
 ### `PGTHUMBOR_POOL_MAX_SIZE`
 
-Maximum number of connections in the async connection pool.  Default: `4`.
+Maximum number of connections in the async connection pool.
+Default: `4`.
 
 ```python
 PGTHUMBOR_POOL_MAX_SIZE = 4
 ```
 
-Increase this if Thumbor handles many concurrent image requests.  Each
+Increase this if Thumbor handles many concurrent image requests.
+Each
 connection holds a PostgreSQL backend slot.
 
 ## Plone access control
@@ -149,7 +162,8 @@ connection holds a PostgreSQL backend slot.
 ### `PGTHUMBOR_PLONE_AUTH_URL`
 
 Internal URL of the Plone site, used by the `auth_handler` to verify access
-for non-public images.  This should be a direct URL to Plone, bypassing any
+for non-public images.
+This should be a direct URL to Plone, bypassing any
 reverse proxy to avoid loops and reduce latency:
 
 ```python
@@ -164,7 +178,8 @@ PGTHUMBOR_PLONE_AUTH_URL = os.environ.get("PGTHUMBOR_PLONE_AUTH_URL", "")
 ```
 
 The auth handler calls `<url>/@thumbor-auth?zoid=<content_zoid_hex>` with the
-browser's Cookie and Authorization headers forwarded.  Plone returns 200 if
+browser's Cookie and Authorization headers forwarded.
+Plone returns 200 if
 the user may view the content, or 403/401 otherwise.
 
 If this setting is empty and a 3-segment (authenticated) URL is requested, the
@@ -172,13 +187,15 @@ handler denies the request.
 
 ### `PGTHUMBOR_AUTH_CACHE_TTL`
 
-How long (in seconds) to cache auth results.  Default: `60`.
+How long (in seconds) to cache auth results.
+Default: `60`.
 
 ```python
 PGTHUMBOR_AUTH_CACHE_TTL = 60
 ```
 
-Auth results are cached per `(content_zoid, cookie_header)` tuple.  A shorter
+Auth results are cached per `(content_zoid, cookie_header)` tuple.
+A shorter
 TTL means more frequent Plone round-trips but faster permission revocation.
 
 ## Disk cache (loader-side)
@@ -188,7 +205,8 @@ This caches raw blob bytes to avoid repeated PostgreSQL or S3 fetches.
 
 ### `PGTHUMBOR_CACHE_DIR`
 
-Directory for the local disk cache.  Empty string (default) disables caching:
+Directory for the local disk cache.
+Empty string (default) disables caching:
 
 ```python
 PGTHUMBOR_CACHE_DIR = "/tmp/thumbor/blob_cache"
@@ -196,7 +214,9 @@ PGTHUMBOR_CACHE_DIR = "/tmp/thumbor/blob_cache"
 
 ### `PGTHUMBOR_CACHE_MAX_SIZE`
 
-Maximum cache size in bytes.  Default: `0` (disabled).  LRU eviction removes
+Maximum cache size in bytes.
+Default: `0` (disabled).
+LRU eviction removes
 the least-recently-accessed files when the cache exceeds this limit:
 
 ```python
@@ -210,12 +230,14 @@ cache invalidation concern -- only LRU eviction for space.
 
 ## S3 fallback
 
-For tiered blob storage where large blobs are offloaded to S3.  See
+For tiered blob storage where large blobs are offloaded to S3.
+See
 {doc}`enable-s3-fallback` for a detailed setup guide.
 
 ### `PGTHUMBOR_S3_BUCKET`
 
-S3 bucket name.  Empty string (default) disables S3 fallback:
+S3 bucket name.
+Empty string (default) disables S3 fallback:
 
 ```python
 PGTHUMBOR_S3_BUCKET = "my-blobs"
@@ -223,7 +245,8 @@ PGTHUMBOR_S3_BUCKET = "my-blobs"
 
 ### `PGTHUMBOR_S3_REGION`
 
-AWS region.  Default: `us-east-1`:
+AWS region.
+Default: `us-east-1`:
 
 ```python
 PGTHUMBOR_S3_REGION = "eu-central-1"
@@ -231,7 +254,9 @@ PGTHUMBOR_S3_REGION = "eu-central-1"
 
 ### `PGTHUMBOR_S3_ENDPOINT`
 
-Custom S3 endpoint URL.  Empty string (default) uses AWS.  Set this for
+Custom S3 endpoint URL.
+Empty string (default) uses AWS.
+Set this for
 S3-compatible services like MinIO:
 
 ```python

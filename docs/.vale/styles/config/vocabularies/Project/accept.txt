@@ -115,3 +115,6 @@ portal_catalog
 postgres
 subrequest[s]?
 [Uu]ntrusted
+[Bb]ackend[s]?
+autoregistering
+[Aa]uto(detect(ed|s|ion)?|discover(ed|s|y)|creat(ed|es))

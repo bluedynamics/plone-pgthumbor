@@ -135,3 +135,59 @@ class TestHandleCancel:
         form.request.response.redirect.assert_called_once_with(
             "http://localhost:8080/Plone/@@overview-controlpanel"
         )
+
+
+class TestHandlePurgeScales:
+    """Test ThumborSettingsForm.handlePurgeScales() method."""
+
+    @patch("plone.pgthumbor.controlpanel.purge_scales")
+    def test_purge_sets_status_message(self, mock_purge):
+        from plone.pgthumbor.controlpanel import ThumborSettingsForm
+
+        mock_purge.return_value = (10, 45, 2, 50)
+
+        form = ThumborSettingsForm.__new__(ThumborSettingsForm)
+        form.context = MagicMock()
+
+        form.handlePurgeScales(form, action=MagicMock())
+
+        mock_purge.assert_called_once_with(form.context)
+        assert "10" in form.status
+        assert "45" in form.status
+        assert "2 skipped" in form.status
+        assert "50 total" in form.status
+
+    @patch("plone.pgthumbor.controlpanel.purge_scales")
+    def test_purge_zero_results(self, mock_purge):
+        from plone.pgthumbor.controlpanel import ThumborSettingsForm
+
+        mock_purge.return_value = (0, 0, 0, 100)
+
+        form = ThumborSettingsForm.__new__(ThumborSettingsForm)
+        form.context = MagicMock()
+
+        form.handlePurgeScales(form, action=MagicMock())
+
+        assert "Purged 0" in form.status
+
+
+class TestUpdateActions:
+    """Test that updateActions configures the purge button styling."""
+
+    def test_purge_button_has_destructive_class(self):
+        from plone.pgthumbor.controlpanel import _PURGE_CONFIRM_JS
+        from plone.pgthumbor.controlpanel import ThumborSettingsForm
+
+        form = ThumborSettingsForm.__new__(ThumborSettingsForm)
+        # Simple object that allows attr assignment (z3c.form actions are
+        # heavily schema-validated, so we bypass with a plain namespace)
+        action_obj = type("Action", (), {"klass": "", "onclick": ""})()
+        form.__dict__["actions"] = {"purge_scales": action_obj}
+
+        with patch.object(
+            ThumborSettingsForm.__mro__[1], "updateActions", return_value=None
+        ):
+            form.updateActions()
+
+        assert "destructive" in action_obj.klass
+        assert action_obj.onclick == _PURGE_CONFIRM_JS

@@ -85,6 +85,16 @@ No `thumbor.conf` editing is required.
 | `PGTHUMBOR_PLONE_AUTH_URL` | `""` | Internal Plone URL for auth verification. Empty disables the auth handler entirely. |
 | `PGTHUMBOR_AUTH_CACHE_TTL` | `60` | Auth cache lifetime in seconds. |
 
+### Cache-Control headers
+
+These settings only take effect when the auth handler is loaded
+(`PGTHUMBOR_PLONE_AUTH_URL` is set).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PGTHUMBOR_CACHE_CONTROL_AUTHENTICATED` | `private, max-age=86400` | Cache-Control header for authenticated (3-segment) image URLs. `private` prevents proxy caching while allowing the browser to cache. |
+| `PGTHUMBOR_CACHE_CONTROL_PUBLIC` | `""` (empty) | Cache-Control header for public (2-segment) image URLs. Empty uses Thumbor's default (`max-age=N,public`). |
+
 ### Result storage
 
 | Variable | Default | Description |

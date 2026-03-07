@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.0 (unreleased)
+
+- Nothing yet.
+
 ## 0.2.0 (2026-03-07)
 
 - Add `@@thumbor-purge-scales` view and `zconsole run -m` script to remove

@@ -18,6 +18,8 @@ HAProxy
 Caddy
 Fastly
 Statsd
+Trixie
+[Dd]ebian
 
 # ZODB / Python ecosystem
 RelStorage

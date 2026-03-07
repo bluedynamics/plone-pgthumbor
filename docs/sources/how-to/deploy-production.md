@@ -5,6 +5,30 @@
 This guide covers the key considerations for deploying plone.pgthumbor and
 Thumbor in a production environment.
 
+## Thumbor image
+
+Use the pre-built OCI image from GHCR:
+
+```yaml
+thumbor:
+  image: ghcr.io/bluedynamics/zodb-pgjsonb-thumborblobloader:latest
+  environment:
+    PGTHUMBOR_DSN: "dbname=zodb host=postgres user=zodb password=zodb"
+    THUMBOR_SECURITY_KEY: "${THUMBOR_SECURITY_KEY}"
+    PGTHUMBOR_PLONE_AUTH_URL: "http://plone:8080/Plone"
+```
+
+The image is available for `linux/amd64` and `linux/arm64`.
+It is configured entirely via environment variables -- no `thumbor.conf`
+editing is needed.
+See {doc}`../reference/docker-image` for the full
+variable reference.
+
+The image is automatically rebuilt weekly when a new Thumbor version
+appears on PyPI.
+Pin a specific version tag (for example
+`thumbor-7.7.7_loader-0.3.0`) for reproducible deployments.
+
 ## HMAC key management
 
 Generate a strong random key (at least 32 characters):

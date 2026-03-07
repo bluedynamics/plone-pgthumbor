@@ -7,6 +7,12 @@ plone.pgthumbor stack.
 All settings are standard Thumbor configuration keys
 that can also be set via environment variables.
 
+:::{tip}
+When using the {doc}`pre-built Docker image <../reference/docker-image>`,
+all settings below are configurable via environment variables.
+No `thumbor.conf` editing is required.
+:::
+
 ## Minimal configuration
 
 ```python

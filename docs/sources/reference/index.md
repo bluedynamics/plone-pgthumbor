@@ -10,6 +10,7 @@ maxdepth: 2
 titlesonly: true
 ---
 configuration
+docker-image
 url-format
 rest-api
 changelog

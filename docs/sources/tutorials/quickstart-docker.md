@@ -43,13 +43,18 @@ See {doc}`../how-to/develop` for details.
 docker compose up -d --build
 ```
 
-This builds and starts four services:
+The Thumbor service uses the pre-built image from GHCR
+(`ghcr.io/bluedynamics/zodb-pgjsonb-thumborblobloader`), available for
+`linux/amd64` and `linux/arm64`.
+Only the Plone service is built locally.
+
+This starts four services:
 
 | Service      | Port | Description                               |
 |-------------|------|-------------------------------------------|
 | **postgres** | 5434 | PostgreSQL 17 with zodb-pgjsonb storage   |
 | **plone**    | 8080 | Plone 6.2 backend (via nginx)             |
-| **thumbor**  | 8888 | Thumbor 7 image processor (via nginx)     |
+| **thumbor**  | 8888 | Thumbor 7 image processor (pre-built from GHCR) |
 | **nginx**    | 8080 | Reverse proxy (public entry point)        |
 
 Wait until all services are healthy:

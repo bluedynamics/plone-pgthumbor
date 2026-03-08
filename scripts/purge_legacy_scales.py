@@ -32,7 +32,7 @@ How to run (plain Zope instance)
 What it does
 ------------
 
-- Walks every cataloged object via unrestrictedSearchResults
+- Walks every cataloged Image object via unrestrictedSearchResults
 - Deletes the ``plone.scale`` annotation (where Plone stores cached
   image scale blobs and metadata)
 - Commits every BATCH_SIZE objects to keep memory bounded
@@ -58,14 +58,14 @@ BATCH_SIZE = 500
 def purge_scales(portal):
     catalog = portal.portal_catalog
     site_path = "/".join(portal.getPhysicalPath())
-    brains = catalog.unrestrictedSearchResults(path=site_path)
+    brains = catalog.unrestrictedSearchResults(path=site_path, portal_type="Image")
     total = len(brains)
 
     purged = 0
     scales_removed = 0
     skipped = 0
 
-    print(f"Scanning {total} cataloged objects ...")
+    print(f"Scanning {total} Image objects ...")
 
     for i, brain in enumerate(brains, 1):
         try:

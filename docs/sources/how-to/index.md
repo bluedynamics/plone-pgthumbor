@@ -28,6 +28,16 @@ deploy-production
 enable-s3-fallback
 ```
 
+## Migration
+
+```{toctree}
+---
+maxdepth: 2
+titlesonly: true
+---
+purge-legacy-scales
+```
+
 ## Development
 
 ```{toctree}

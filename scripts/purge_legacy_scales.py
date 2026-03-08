@@ -21,8 +21,12 @@ How to run (Docker)
            env SITE_ID=mysite \
            zconsole run etc/zope.conf /tmp/purge_legacy_scales.py
 
-   The script commits in batches (default 500 objects) and logs progress
-   to stdout.  On a site with 100k objects expect a few minutes.
+   By default, scales younger than 6 months are kept.  Override with::
+
+       env MAX_AGE_DAYS=90 zconsole run ...
+
+   The script commits in batches and logs progress to stdout.
+   Memory-safe: uses malloc_trim to return freed memory to the OS.
 
 How to run (plain Zope instance)
 --------------------------------
@@ -32,10 +36,11 @@ How to run (plain Zope instance)
 What it does
 ------------
 
-- Walks every cataloged Image object via unrestrictedSearchResults
+- Walks every cataloged object via the catalog's internal path mapping
 - Deletes the ``plone.scale`` annotation (where Plone stores cached
-  image scale blobs and metadata)
-- Commits every BATCH_SIZE objects to keep memory bounded
+  image scale blobs and metadata) older than MAX_AGE_DAYS
+- Commits every BATCH_SIZE objects, minimizes ZODB cache, and calls
+  malloc_trim to return freed memory to the OS
 - Prints a summary at the end
 
 It does NOT touch original images — only the generated scale copies.
@@ -43,68 +48,157 @@ It does NOT touch original images — only the generated scale copies.
 
 from AccessControl.SecurityManagement import newSecurityManager
 from Testing.makerequest import makerequest
-from zope.annotation.interfaces import IAnnotations
 from zope.component.hooks import setSite
 
+import ctypes
+import gc
 import os
 import sys
+import time
+import traceback
 import transaction
 
 
 ANNOTATION_KEY = "plone.scale"
-BATCH_SIZE = 500
+BATCH_SIZE = 50
+# Keep scales younger than this (seconds). Default: 6 months.
+MAX_AGE = int(os.environ.get("MAX_AGE_DAYS", "180")) * 86400
+
+# glibc malloc_trim — releases freed heap memory back to the OS.
+# Without this, Python keeps freed memory in its internal arena allocator
+# and the RSS grows until OOM even though objects have been garbage collected.
+try:
+    _libc = ctypes.CDLL("libc.so.6")
+
+    def _release_memory():
+        gc.collect()
+        _libc.malloc_trim(0)
+
+except OSError:
+
+    def _release_memory():
+        gc.collect()
 
 
-def purge_scales(portal):
+def _invalidate_cache(conn):
+    """Invalidate ALL cached objects — removes ghosts from cache entirely.
+
+    cacheMinimize() only ghosts objects but keeps them in the cache dict.
+    Ghost objects still consume ~200 bytes each of Python heap.  After 20k+
+    objects, ghost accumulation causes OOM.  invalidate() truly removes
+    unreferenced objects from the cache, allowing Python (and malloc_trim)
+    to free the memory.
+    """
+    oids = [oid for oid, _ in conn._cache.items()]
+    for oid in oids:
+        try:
+            conn._cache.invalidate(oid)
+        except KeyError:
+            pass
+
+
+def purge_scales(app, portal, site_id):
     catalog = portal.portal_catalog
-    site_path = "/".join(portal.getPhysicalPath())
-    brains = catalog.unrestrictedSearchResults(path=site_path, portal_type="Image")
-    total = len(brains)
+    conn = portal._p_jar
+    db = conn.db()
+
+    # Reduce ZODB cache to minimum
+    original_cache_size = db.getCacheSize()
+    db.setCacheSize(50)
+
+    # Read RIDs (integers, ~4 MB for 130k) from catalog internals.
+    cat = catalog._catalog
+    rids = sorted(cat.paths.keys())
+    total = len(rids)
+    conn.cacheMinimize()
+    _release_memory()
 
     purged = 0
     scales_removed = 0
     skipped = 0
+    has_annotations = 0
+    has_scale_key = 0
+    cutoff = time.time() - MAX_AGE
 
-    print(f"Scanning {total} Image objects ...")
+    print(f"Processing {total} objects (cutoff={cutoff}) ...", flush=True)
 
-    for i, brain in enumerate(brains, 1):
+    for i in range(total):
+        rid = rids[i]
         try:
-            obj = brain._unrestrictedGetObject()
+            path = cat.paths[rid]
+            obj = portal.unrestrictedTraverse(path)
         except Exception:
             skipped += 1
-            continue
+            obj = None
 
-        try:
-            annotations = IAnnotations(obj, None)
-        except TypeError:
-            skipped += 1
-            continue
+        if obj is not None:
+            # Try direct __annotations__ access first (bypasses adapter)
+            ann_dict = getattr(obj, "__annotations__", None)
+            if ann_dict is not None:
+                has_annotations += 1
+                if ANNOTATION_KEY in ann_dict:
+                    has_scale_key += 1
+                    storage = ann_dict[ANNOTATION_KEY]
+                    to_delete = []
+                    try:
+                        for key, val in list(storage.items()):
+                            modified = 0
+                            if isinstance(val, dict):
+                                modified = val.get("modified", 0)
+                                # plone.scale stores modified in milliseconds
+                                if modified > 1e12:
+                                    modified = modified / 1000.0
+                            if modified < cutoff:
+                                to_delete.append(key)
+                    except Exception:
+                        # Storage not iterable — remove entirely
+                        to_delete = None
 
-        if annotations is None:
-            continue
+                    if to_delete is None:
+                        del ann_dict[ANNOTATION_KEY]
+                        scales_removed += 1
+                        purged += 1
+                    elif to_delete:
+                        for key in to_delete:
+                            del storage[key]
+                        scales_removed += len(to_delete)
+                        if not len(storage):
+                            del ann_dict[ANNOTATION_KEY]
+                        purged += 1
 
-        if ANNOTATION_KEY in annotations:
-            storage = annotations[ANNOTATION_KEY]
-            try:
-                scales_removed += len(storage)
-            except TypeError:
-                pass
-            del annotations[ANNOTATION_KEY]
-            purged += 1
+            obj._p_deactivate()
 
-        if purged > 0 and purged % BATCH_SIZE == 0:
+        if (i + 1) % BATCH_SIZE == 0:
             transaction.commit()
+            # Invalidate all cached objects — ghosts included — to truly
+            # free memory.  Referenced objects (app, portal) become ghosts
+            # and are transparently reloaded on next attribute access.
+            _invalidate_cache(conn)
+            _release_memory()
+
+            # Re-establish references after cache invalidation.
+            # Accessing app[site_id] reloads portal from ZODB.
+            portal = app[site_id]
+            setSite(portal)
+            cat = portal.portal_catalog._catalog
+
             print(
-                f"Progress: {purged} objects purged, "
-                f"{scales_removed} scales removed ({i} / {total} scanned)"
+                f"Progress: {i + 1} / {total} scanned, "
+                f"{purged} purged, {scales_removed} scales removed, "
+                f"{has_annotations} with ann, {has_scale_key} with scales",
+                flush=True,
             )
 
+    # Final commit
     if purged > 0:
         transaction.commit()
 
+    db.setCacheSize(original_cache_size)
+
     print(
         f"Done. Purged {scales_removed} scales from {purged} objects "
-        f"({skipped} skipped, {total} total)."
+        f"({skipped} skipped, {total} total).",
+        flush=True,
     )
     return purged
 
@@ -137,4 +231,8 @@ if site_id not in app.objectIds():
 
 portal = app[site_id]
 setSite(portal)
-purge_scales(portal)
+try:
+    purge_scales(app, portal, site_id)
+except Exception:
+    traceback.print_exc()
+    sys.exit(1)

@@ -57,10 +57,12 @@ BATCH_SIZE = 500
 
 def purge_scales(portal):
     catalog = portal.portal_catalog
-    brains = catalog.unrestrictedSearchResults()
+    site_path = "/".join(portal.getPhysicalPath())
+    brains = catalog.unrestrictedSearchResults(path=site_path)
     total = len(brains)
 
     purged = 0
+    scales_removed = 0
     skipped = 0
 
     print(f"Scanning {total} cataloged objects ...")
@@ -82,18 +84,27 @@ def purge_scales(portal):
             continue
 
         if ANNOTATION_KEY in annotations:
+            storage = annotations[ANNOTATION_KEY]
+            try:
+                scales_removed += len(storage)
+            except TypeError:
+                pass
             del annotations[ANNOTATION_KEY]
             purged += 1
 
         if purged > 0 and purged % BATCH_SIZE == 0:
             transaction.commit()
-            print(f"Progress: {purged} purged so far ({i} / {total} objects scanned)")
+            print(
+                f"Progress: {purged} objects purged, "
+                f"{scales_removed} scales removed ({i} / {total} scanned)"
+            )
 
     if purged > 0:
         transaction.commit()
 
     print(
-        f"Done. Purged {purged} scale annotations ({skipped} skipped, {total} total)."
+        f"Done. Purged {scales_removed} scales from {purged} objects "
+        f"({skipped} skipped, {total} total)."
     )
     return purged
 

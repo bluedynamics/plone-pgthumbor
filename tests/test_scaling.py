@@ -655,3 +655,192 @@ class TestThumborImageScalingScaleUrl:
         scaling = ThumborImageScaling(ctx, request)
         result = scaling._scale_url("uid123", "jpeg")
         assert "@@images/uid123.jpeg" in result
+
+
+class TestGetCrop:
+    """Test _get_crop() helper."""
+
+    def test_no_provider_returns_none(self, monkeypatch):
+        """No ICropProvider adapter → None."""
+        from plone.pgthumbor import scaling as scaling_mod
+
+        monkeypatch.setattr(scaling_mod, "queryAdapter", lambda ctx, iface: None)
+        result = scaling_mod._get_crop(
+            MagicMock(), "image", {"key": (("scale", "preview"),)}
+        )
+        assert result is None
+
+    def test_with_provider_returns_crop(self, monkeypatch):
+        """ICropProvider returns a 4-tuple → converted to nested tuple."""
+        from plone.pgthumbor import scaling as scaling_mod
+
+        provider = MagicMock()
+        provider.get_crop.return_value = (10, 20, 300, 400)
+        monkeypatch.setattr(scaling_mod, "queryAdapter", lambda ctx, iface: provider)
+
+        result = scaling_mod._get_crop(
+            MagicMock(),
+            "image",
+            {"key": (("scale", "preview"),)},
+        )
+        assert result == ((10, 20), (300, 400))
+        provider.get_crop.assert_called_once_with("image", "preview")
+
+    def test_no_scale_name_returns_none(self, monkeypatch):
+        """scale_info without 'key' → no scale name → None."""
+        from plone.pgthumbor import scaling as scaling_mod
+
+        provider = MagicMock()
+        monkeypatch.setattr(scaling_mod, "queryAdapter", lambda ctx, iface: provider)
+
+        result = scaling_mod._get_crop(MagicMock(), "image", {})
+        assert result is None
+        provider.get_crop.assert_not_called()
+
+    def test_provider_returns_none(self, monkeypatch):
+        """ICropProvider returns None → None."""
+        from plone.pgthumbor import scaling as scaling_mod
+
+        provider = MagicMock()
+        provider.get_crop.return_value = None
+        monkeypatch.setattr(scaling_mod, "queryAdapter", lambda ctx, iface: provider)
+
+        result = scaling_mod._get_crop(
+            MagicMock(),
+            "image",
+            {"key": (("scale", "preview"),)},
+        )
+        assert result is None
+
+    def test_no_fieldname_returns_none(self, monkeypatch):
+        """Empty fieldname → None."""
+        from plone.pgthumbor import scaling as scaling_mod
+
+        provider = MagicMock()
+        monkeypatch.setattr(scaling_mod, "queryAdapter", lambda ctx, iface: provider)
+
+        result = scaling_mod._get_crop(
+            MagicMock(),
+            "",
+            {"key": (("scale", "preview"),)},
+        )
+        assert result is None
+
+
+class TestBuildThumborUrlWithCrop:
+    """Test _build_thumbor_url() crop behavior."""
+
+    def test_crop_forces_fit_in_and_disables_smart(self, monkeypatch):
+        """When crop is set, fit_in=True and smart=False regardless of mode."""
+        from plone.pgthumbor import scaling as scaling_mod
+
+        _setup_env(monkeypatch)
+        monkeypatch.setattr(
+            scaling_mod, "_needs_auth_url", lambda ctx, zoid, paranoid_mode=False: False
+        )
+
+        ctx = MagicMock()
+        ctx._p_oid = struct.pack(">Q", 0x42)
+        data = _mock_image_data()
+        crop = ((10, 20), (300, 400))
+
+        url = scaling_mod._build_thumbor_url(ctx, data, 400, 300, "cover", crop=crop)
+        assert url is not None
+        # With crop, URL should have crop coords and fit-in, no smart
+        assert "10x20:300x400" in url
+        assert "fit-in" in url
+        assert "/smart/" not in url
+
+    def test_no_crop_keeps_mode_behavior(self, monkeypatch):
+        """Without crop, mode params unchanged."""
+        from plone.pgthumbor import scaling as scaling_mod
+
+        _setup_env(monkeypatch)
+        monkeypatch.setattr(
+            scaling_mod, "_needs_auth_url", lambda ctx, zoid, paranoid_mode=False: False
+        )
+
+        ctx = MagicMock()
+        ctx._p_oid = struct.pack(">Q", 0x42)
+        data = _mock_image_data()
+
+        url = scaling_mod._build_thumbor_url(ctx, data, 400, 300, "cover")
+        assert url is not None
+        assert "fit-in" not in url
+
+
+class TestCropInScaleUrl:
+    """Test crop integration in _scale_url methods."""
+
+    def test_scale_url_with_crop(self, monkeypatch):
+        """ThumborImageScale._scale_url includes crop coordinates."""
+        from plone.pgthumbor import scaling as scaling_mod
+        from plone.pgthumbor.scaling import ThumborImageScale
+
+        _setup_env(monkeypatch)
+        monkeypatch.setattr(
+            scaling_mod, "_needs_auth_url", lambda ctx, zoid, paranoid_mode=False: False
+        )
+        # Mock crop provider
+        provider = MagicMock()
+        provider.get_crop.return_value = (10, 20, 300, 400)
+        monkeypatch.setattr(scaling_mod, "queryAdapter", lambda ctx, iface: provider)
+
+        ctx = MagicMock()
+        ctx._p_oid = struct.pack(">Q", 0x42)
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        request = MagicMock()
+        data = _mock_image_data()
+
+        scale = ThumborImageScale(ctx, request, data=data, fieldname="image")
+        scale.data = data
+
+        result = scale._scale_url(
+            "uid123",
+            "jpeg",
+            scale_info={
+                "uid": "uid123",
+                "width": 400,
+                "height": 300,
+                "mode": "scale",
+                "fieldname": "image",
+                "key": (("scale", "preview"),),
+            },
+        )
+        assert result.startswith(SERVER)
+        assert "10x20:300x400" in result
+
+    def test_scaling_scale_url_with_crop(self, monkeypatch):
+        """ThumborImageScaling._scale_url includes crop coordinates."""
+        from plone.pgthumbor import scaling as scaling_mod
+        from plone.pgthumbor.scaling import ThumborImageScaling
+
+        _setup_env(monkeypatch)
+        monkeypatch.setattr(
+            scaling_mod, "_needs_auth_url", lambda ctx, zoid, paranoid_mode=False: False
+        )
+        provider = MagicMock()
+        provider.get_crop.return_value = (10, 20, 300, 400)
+        monkeypatch.setattr(scaling_mod, "queryAdapter", lambda ctx, iface: provider)
+
+        ctx = MagicMock()
+        ctx._p_oid = struct.pack(">Q", 0x42)
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        ctx.image = _mock_image_data()
+        request = MagicMock()
+
+        scaling = ThumborImageScaling(ctx, request)
+        result = scaling._scale_url(
+            "uid123",
+            "jpeg",
+            scale_info={
+                "fieldname": "image",
+                "uid": "uid123",
+                "width": 400,
+                "height": 300,
+                "mode": "scale",
+                "key": (("scale", "preview"),),
+            },
+        )
+        assert result.startswith(SERVER)
+        assert "10x20:300x400" in result

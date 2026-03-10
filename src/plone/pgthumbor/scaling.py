@@ -12,9 +12,11 @@ from plone.pgcatalog.pool import get_pool
 from plone.pgcatalog.pool import get_request_connection
 from plone.pgthumbor.blob import get_blob_ids
 from plone.pgthumbor.config import get_thumbor_config
+from plone.pgthumbor.interfaces import ICropProvider
 from plone.pgthumbor.url import scale_mode_to_thumbor
 from plone.pgthumbor.url import thumbor_url
 from ZODB.utils import u64
+from zope.component import queryAdapter
 
 import logging
 
@@ -56,10 +58,14 @@ def _needs_auth_url(context, zoid: int, paranoid_mode: bool = False) -> bool:
         return True  # fail safe → use auth URL
 
 
-def _build_thumbor_url(context, data, width, height, mode):
+def _build_thumbor_url(context, data, width, height, mode, crop=None):
     """Build a Thumbor URL for the given image data and dimensions.
 
     Returns None if Thumbor is not applicable (SVG, no config, no blob).
+
+    When *crop* is set, Thumbor performs an explicit crop before resizing.
+    In that case fit_in is forced True and smart is forced False (explicit
+    crop overrides smart detection).
     """
     content_type = getattr(data, "contentType", "") if data else ""
     if content_type in _SKIP_THUMBOR_TYPES:
@@ -84,6 +90,11 @@ def _build_thumbor_url(context, data, width, height, mode):
             content_zoid = content_zoid_int
 
     thumbor_params = scale_mode_to_thumbor(mode, smart_cropping=cfg.smart_cropping)
+    if crop is not None:
+        # Explicit crop overrides smart detection — let Thumbor crop
+        # the specified region and then fit the result.
+        thumbor_params["fit_in"] = True
+        thumbor_params["smart"] = False
 
     return thumbor_url(
         server_url=cfg.server_url,
@@ -94,8 +105,37 @@ def _build_thumbor_url(context, data, width, height, mode):
         height=height,
         unsafe=cfg.unsafe,
         content_zoid=content_zoid,
+        crop=crop,
         **thumbor_params,
     )
+
+
+def _get_crop(context, fieldname, scale_info):
+    """Look up crop coordinates via an ICropProvider adapter.
+
+    Returns ``((left, top), (right, bottom))`` or None.
+    """
+    provider = queryAdapter(context, ICropProvider)
+    if provider is None:
+        return None
+
+    # Extract scale name from plone.namedfile's key tuple, e.g.
+    # (("fieldname", "image"), ("scale", "preview"), ...)
+    scale_name = None
+    key = scale_info.get("key") if scale_info else None
+    if key:
+        scale_name = dict(key).get("scale")
+
+    if not fieldname or not scale_name:
+        return None
+
+    box = provider.get_crop(fieldname, scale_name)
+    if box is None:
+        return None
+    # Convert (left, top, right, bottom) to ((left, top), (right, bottom))
+    if len(box) == 4:
+        return ((box[0], box[1]), (box[2], box[3]))
+    return box
 
 
 def _default_scale_url(context, uid, extension, base_url=None):
@@ -125,12 +165,14 @@ class ThumborImageScale(ImageScale):
         # With new plone.namedfile, _scale_url was already called by
         # parent __init__. With old versions, set up Thumbor URL here.
         if not _HAS_SCALE_URL and self._thumbor_url is None and "uid" in info:
+            crop = _get_crop(context, info.get("fieldname"), info)
             url = _build_thumbor_url(
                 context,
                 self.data,
                 info.get("width", 0) or 0,
                 info.get("height", 0) or 0,
                 info.get("mode", "scale"),
+                crop=crop,
             )
             if url:
                 self._thumbor_url = url
@@ -139,12 +181,14 @@ class ThumborImageScale(ImageScale):
     def _scale_url(self, uid, extension, base_url=None, scale_info=None):
         """Generate Thumbor URL if possible, otherwise fall back to default."""
         if scale_info and "uid" in scale_info:
+            crop = _get_crop(self.context, scale_info.get("fieldname"), scale_info)
             url = _build_thumbor_url(
                 self.context,
                 self.data,
                 scale_info.get("width", 0) or 0,
                 scale_info.get("height", 0) or 0,
                 scale_info.get("mode", "scale"),
+                crop=crop,
             )
             if url:
                 self._thumbor_url = url
@@ -171,12 +215,14 @@ class ThumborImageScaling(ImageScaling):
         if scale_info and scale_info.get("fieldname"):
             data = getattr(self.context, scale_info["fieldname"], None)
             if data is not None:
+                crop = _get_crop(self.context, scale_info["fieldname"], scale_info)
                 url = _build_thumbor_url(
                     self.context,
                     data,
                     scale_info.get("width", 0) or 0,
                     scale_info.get("height", 0) or 0,
                     scale_info.get("mode", "scale"),
+                    crop=crop,
                 )
                 if url:
                     return url

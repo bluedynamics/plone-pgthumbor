@@ -1,9 +1,29 @@
-"""Plone registry schema for Thumbor settings."""
+"""Plone registry schema and adapter interfaces for Thumbor integration."""
 
 from __future__ import annotations
 
 from zope import schema
 from zope.interface import Interface
+
+
+class ICropProvider(Interface):
+    """Adapter providing crop coordinates for Thumbor URLs.
+
+    Implementations are looked up as named adapters on (context,)
+    and should return crop box tuples compatible with libthumbor's
+    ``crop`` parameter: ``((left, top), (right, bottom))``.
+    """
+
+    def get_crop(fieldname, scale_name):
+        """Return crop coordinates for a given field and scale.
+
+        Args:
+            fieldname: Name of the image field (e.g. "image").
+            scale_name: Name of the Plone scale (e.g. "preview", "thumb").
+
+        Returns:
+            Tuple ``((left, top), (right, bottom))`` or None if no crop.
+        """
 
 
 class IThumborSettings(Interface):

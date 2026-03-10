@@ -28,6 +28,17 @@ deploy-production
 enable-s3-fallback
 ```
 
+## Addon integration
+
+```{toctree}
+---
+maxdepth: 2
+titlesonly: true
+---
+integrate-imagecropping
+write-crop-provider
+```
+
 ## Migration
 
 ```{toctree}

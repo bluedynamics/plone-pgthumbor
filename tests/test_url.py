@@ -279,3 +279,57 @@ class TestThumborUrlContentZoid:
         crypto = CryptoURL(key=KEY)
         expected_path = crypto.generate(image_url="42/ff/1a", width=400, height=0)
         assert path == expected_path
+
+
+class TestThumborUrlCrop:
+    """Test thumbor_url() with crop parameter."""
+
+    def test_crop_in_url(self):
+        """Crop coordinates appear in the URL path."""
+        from plone.pgthumbor.url import thumbor_url
+
+        url = thumbor_url(
+            server_url=SERVER,
+            security_key=KEY,
+            zoid=0x42,
+            tid=0xFF,
+            width=400,
+            height=300,
+            crop=((10, 20), (300, 400)),
+        )
+        assert "10x20:300x400" in url
+
+    def test_crop_none_no_crop_in_url(self):
+        """crop=None → no crop coordinates in URL."""
+        from plone.pgthumbor.url import thumbor_url
+
+        url = thumbor_url(
+            server_url=SERVER,
+            security_key=KEY,
+            zoid=0x42,
+            tid=0xFF,
+            width=400,
+            height=300,
+        )
+        # No crop coordinates pattern
+        assert "x20:" not in url
+
+    def test_crop_signature_matches_libthumbor(self):
+        """Crop URL signature matches direct libthumbor generation."""
+        from libthumbor import CryptoURL
+        from plone.pgthumbor.url import thumbor_url
+
+        crop = ((10, 20), (300, 400))
+        url = thumbor_url(
+            server_url=SERVER,
+            security_key=KEY,
+            zoid=0x42,
+            tid=0xFF,
+            width=400,
+            height=300,
+            crop=crop,
+        )
+        path = url[len(SERVER) :]
+        crypto = CryptoURL(key=KEY)
+        expected = crypto.generate(image_url="42/ff", width=400, height=300, crop=crop)
+        assert path == expected

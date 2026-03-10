@@ -20,16 +20,17 @@ together, and the reasoning behind the key design choices.
 
 | File | Purpose |
 |---|---|
-| `scaling.py` | `ThumborImageScale` + `ThumborImageScaling` -- `@@images` view override, 302 redirect |
+| `scaling.py` | `ThumborImageScale` + `ThumborImageScaling` -- `@@images` view override, 302 redirect, crop lookup |
 | `storage.py` | `ThumborScaleStorage` -- `IImageScaleStorage` adapter, no Pillow invocation |
-| `url.py` | `thumbor_url()` + `scale_mode_to_thumbor()` -- signed URL generation via libthumbor |
+| `url.py` | `thumbor_url()` + `scale_mode_to_thumbor()` -- signed URL generation via libthumbor (supports crop coordinates) |
 | `blob.py` | `get_blob_ids()` -- extracts `(zoid, tid)` from `NamedBlobImage._blob` |
 | `config.py` | `ThumborConfig` dataclass, reads env vars (`PGTHUMBOR_SERVER_URL`, `PGTHUMBOR_SECURITY_KEY`) |
 | `restapi.py` | `ThumborAuthService` -- `@thumbor-auth` REST endpoint for access control |
-| `interfaces.py` | `IThumborSettings` -- Plone registry schema for control panel |
+| `interfaces.py` | `IThumborSettings` + `ICropProvider` -- Plone registry schema and crop adapter interface |
 | `controlpanel.py` | `ThumborSettingsForm` -- Plone control panel for Thumbor settings |
+| `addons_compat/` | Conditional adapters for third-party addons (for example, `imagecropping.py` for plone.app.imagecropping) |
 | `overrides.zcml` | ZCML overrides that wire `ThumborImageScaling` and `ThumborScaleStorage` |
-| `configure.zcml` | Service registration, GenericSetup profile, control panel page |
+| `configure.zcml` | Service registration, GenericSetup profile, control panel page, conditional addon includes |
 
 ### zodb-pgjsonb-thumborblobloader (Thumbor side)
 
@@ -258,6 +259,47 @@ plone.pgthumbor replaces two Plone components via `overrides.zcml`:
 These are `overrides.zcml` registrations (not `configure.zcml`), which means they
 take precedence over plone.namedfile's own registrations regardless of ZCML loading
 order.
+
+### Pluggable crop providers (ICropProvider)
+
+Thumbor supports explicit crop coordinates in its URL format
+(`{left}x{top}:{right}x{bottom}`), which crop the source image before
+resizing.
+plone.pgthumbor exposes this through the `ICropProvider` ZCA adapter
+interface, keeping addon-specific logic out of the core scaling code.
+
+The lookup flow in `_get_crop()`:
+
+1. Call `queryAdapter(context, ICropProvider)`.
+   If no adapter is registered,
+   return `None` (no crop).
+2. Extract the scale name from plone.namedfile's `scale_info["key"]` tuple.
+3. Call `provider.get_crop(fieldname, scale_name)`.
+4. If the provider returns a 4-tuple `(left, top, right, bottom)`, convert it
+   to the nested format `((left, top), (right, bottom))` that libthumbor
+   expects.
+
+When a crop is active, `_build_thumbor_url()` forces `fit_in=True` and
+`smart=False`.
+The rationale: if the editor has explicitly chosen a crop
+region, automatic smart detection should not override that choice.
+
+**Why an adapter, not a hook or event?**
+The ZCA adapter pattern is the right choice because:
+
+- It is conditional by nature -- no adapter registered means zero overhead.
+- It composes cleanly with ZCML conditions (`zcml:condition="installed ..."`)
+  for automatic activation when a compatible addon is present.
+- Multiple crop sources can coexist: a more specific `for` interface wins
+  over `for="*"`, following standard ZCA precedence.
+- Third-party packages can provide their own `ICropProvider` without modifying
+  plone.pgthumbor code.
+
+The built-in `ImageCroppingCropProvider` (in `addons_compat/imagecropping.py`)
+reads from `IAnnotations(context)["plone.app.imagecropping"]`, where
+plone.app.imagecropping stores its crop boxes.
+It is registered via
+conditional ZCML and has zero import cost when the addon is not installed.
 
 ### SVG passthrough
 

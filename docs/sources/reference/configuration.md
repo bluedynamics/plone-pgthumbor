@@ -39,6 +39,30 @@ variables override these values when set.
 | `smart_cropping` | Bool | `False` | Enable Thumbor smart cropping (OpenCV face/feature detection). Applied to `scale` and `cover` modes. |
 | `paranoid_mode` | Bool | `False` | Always verify image access with Plone for every request, even for publicly accessible content. When disabled, only non-public images use the authenticated 3-segment URL format. |
 
+### Crop providers (ICropProvider)
+
+plone.pgthumbor uses a pluggable `ICropProvider` adapter to look up
+explicit crop coordinates before generating Thumbor URLs.
+See {doc}`/how-to/write-crop-provider` for details on writing a custom
+provider.
+
+**Built-in providers:**
+
+| Provider | Package | Registration |
+|---|---|---|
+| `ImageCroppingCropProvider` | `plone.app.imagecropping` | Automatic via conditional ZCML (registered when `plone.app.imagecropping` is installed). |
+
+**Interface:** `plone.pgthumbor.interfaces.ICropProvider`
+
+| Method | Parameters | Returns |
+|---|---|---|
+| `get_crop(fieldname, scale_name)` | `fieldname` (str), `scale_name` (str) | `(left, top, right, bottom)` tuple of int, or `None` |
+
+When a crop provider returns coordinates, the generated Thumbor URL
+includes crop instructions and forces `fit_in=True`, `smart=False`.
+When no provider is registered or the provider returns `None`, URL
+generation proceeds based on the scale mode and smart cropping settings.
+
 ## Thumbor-side settings (zodb-pgjsonb-thumborblobloader)
 
 All Thumbor-side settings are configured in `thumbor.conf`.

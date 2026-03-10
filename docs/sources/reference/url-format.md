@@ -75,7 +75,35 @@ The key must match between Plone (`PGTHUMBOR_SECURITY_KEY` or the
 `security_key` registry setting) and Thumbor (`SECURITY_KEY` in
 `thumbor.conf`).
 
-## Scale Mode Mapping
+## Crop coordinates
+
+When an `ICropProvider` adapter returns crop coordinates for a given
+field and scale, the crop box is included in the URL between the
+signature and the dimensions:
+
+```
+{server_url}/{signature}/{left}x{top}:{right}x{bottom}/fit-in/{WxH}/{zoid_hex}/{tid_hex}
+```
+
+Example:
+
+```
+http://thumbor:8888/Ab3xY.../10x20:300x400/fit-in/400x300/2a/ff
+```
+
+| Component | Format | Description |
+|---|---|---|
+| `left`, `top` | integer | Top-left corner of the crop box in pixel coordinates on the source. |
+| `right`, `bottom` | integer | Bottom-right corner of the crop box in pixel coordinates on the source. |
+
+When crop coordinates are present:
+
+- `fit_in` is forced to `True` regardless of the scale mode.
+- `smart` is forced to `False` (explicit crop overrides smart detection).
+
+The crop is applied to the *original* image before any resizing.
+
+## Scale mode mapping
 
 Plone scale modes are mapped to Thumbor parameters by
 `scale_mode_to_thumbor()`:
@@ -85,6 +113,9 @@ Plone scale modes are mapped to Thumbor parameters by
 | `scale` (default) | `True` | per `smart_cropping` setting | Fits image within the requested dimensions without cropping. Aspect ratio is preserved. Smart cropping is applied if enabled. |
 | `cover` | `False` | per `smart_cropping` setting | Resizes and crops to fill the exact requested dimensions. Smart cropping selects the crop region when enabled. |
 | `contain` | `True` | `False` | Fits image within the requested dimensions. Smart cropping is always disabled. |
+
+When an explicit crop is active, these mode defaults are overridden:
+`fit_in` becomes `True` and `smart` becomes `False` for all modes.
 
 The `smart_cropping` column reflects the `smart_cropping` boolean from
 the Plone registry (`IThumborSettings`).

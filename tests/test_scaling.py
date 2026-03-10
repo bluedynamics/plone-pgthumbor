@@ -528,41 +528,10 @@ class TestThumborImageScaleAuthUrl:
 class TestNeedsAuthUrlExceptionPaths:
     """Test _needs_auth_url() exception handling paths."""
 
-    def test_registry_exception_falls_through_to_pg(self, monkeypatch):
-        """Registry access failure → falls through to PG query."""
-        from plone.pgthumbor import scaling as scaling_mod
-
-        def broken_registry(iface):
-            raise Exception("component architecture not loaded")
-
-        mock_conn = MagicMock()
-        mock_conn.execute.return_value.fetchone.return_value = {"is_anon": True}
-        mock_pool = MagicMock()
-
-        monkeypatch.setattr(
-            "plone.pgthumbor.scaling.queryUtility", broken_registry, raising=False
-        )
-        monkeypatch.setattr(
-            "plone.pgthumbor.scaling.get_pool", lambda ctx: mock_pool, raising=False
-        )
-        monkeypatch.setattr(
-            "plone.pgthumbor.scaling.get_request_connection",
-            lambda pool: mock_conn,
-            raising=False,
-        )
-
-        ctx = MagicMock()
-        result = scaling_mod._needs_auth_url(ctx, 0x42)
-        # Registry failed but PG says Anonymous → False
-        assert result is False
-
     def test_pg_exception_returns_true(self, monkeypatch):
         """PG query failure → fail safe → True."""
         from plone.pgthumbor import scaling as scaling_mod
 
-        monkeypatch.setattr(
-            "plone.pgthumbor.scaling.queryUtility", lambda iface: None, raising=False
-        )
         monkeypatch.setattr(
             "plone.pgthumbor.scaling.get_pool",
             lambda ctx: (_ for _ in ()).throw(Exception("no pool")),
@@ -572,3 +541,117 @@ class TestNeedsAuthUrlExceptionPaths:
         ctx = MagicMock()
         result = scaling_mod._needs_auth_url(ctx, 0x42)
         assert result is True
+
+
+class TestDefaultScaleUrl:
+    """Test _default_scale_url helper."""
+
+    def test_with_base_url(self):
+        from plone.pgthumbor.scaling import _default_scale_url
+
+        ctx = MagicMock()
+        url = _default_scale_url(ctx, "uid123", "jpeg", base_url="http://plone/doc")
+        assert url == "http://plone/doc/@@images/uid123.jpeg"
+        ctx.absolute_url.assert_not_called()
+
+    def test_without_base_url(self):
+        from plone.pgthumbor.scaling import _default_scale_url
+
+        ctx = MagicMock()
+        ctx.absolute_url.return_value = "http://plone/doc"
+        url = _default_scale_url(ctx, "uid123", "jpeg")
+        assert url == "http://plone/doc/@@images/uid123.jpeg"
+
+
+class TestThumborImageScaleScaleUrl:
+    """Test ThumborImageScale._scale_url method."""
+
+    def test_scale_url_with_scale_info(self, monkeypatch):
+        """_scale_url with scale_info generates a Thumbor URL."""
+        from plone.pgthumbor.scaling import ThumborImageScale
+
+        _setup_env(monkeypatch)
+        ctx = MagicMock()
+        ctx._p_oid = struct.pack(">Q", 0x42)
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        request = MagicMock()
+        data = _mock_image_data()
+
+        monkeypatch.setattr(
+            "plone.pgthumbor.scaling._needs_auth_url",
+            lambda ctx, zoid, paranoid_mode=False: False,
+        )
+
+        scale = ThumborImageScale(ctx, request, data=data, fieldname="image")
+        scale.data = data
+
+        result = scale._scale_url(
+            "uid123",
+            "jpeg",
+            scale_info={"uid": "uid123", "width": 400, "height": 300, "mode": "scale"},
+        )
+        assert result.startswith(SERVER)
+        assert scale._thumbor_url == result
+
+    def test_scale_url_fallback_no_scale_info(self, monkeypatch):
+        """_scale_url without scale_info falls back to default URL."""
+        from plone.pgthumbor.scaling import ThumborImageScale
+
+        _setup_env(monkeypatch)
+        ctx = MagicMock()
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        request = MagicMock()
+        data = _mock_image_data()
+
+        scale = ThumborImageScale(ctx, request, data=data, fieldname="image")
+        scale.data = data
+
+        result = scale._scale_url("uid123", "jpeg")
+        assert "@@images/uid123.jpeg" in result
+
+
+class TestThumborImageScalingScaleUrl:
+    """Test ThumborImageScaling._scale_url method."""
+
+    def test_scale_url_with_fieldname(self, monkeypatch):
+        """_scale_url with fieldname in scale_info generates Thumbor URL."""
+        from plone.pgthumbor.scaling import ThumborImageScaling
+
+        _setup_env(monkeypatch)
+        ctx = MagicMock()
+        ctx._p_oid = struct.pack(">Q", 0x42)
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        ctx.image = _mock_image_data()
+        request = MagicMock()
+
+        monkeypatch.setattr(
+            "plone.pgthumbor.scaling._needs_auth_url",
+            lambda ctx, zoid, paranoid_mode=False: False,
+        )
+
+        scaling = ThumborImageScaling(ctx, request)
+        result = scaling._scale_url(
+            "uid123",
+            "jpeg",
+            scale_info={
+                "fieldname": "image",
+                "uid": "uid123",
+                "width": 400,
+                "height": 300,
+                "mode": "scale",
+            },
+        )
+        assert result.startswith(SERVER)
+
+    def test_scale_url_fallback_no_fieldname(self, monkeypatch):
+        """_scale_url without fieldname falls back to default URL."""
+        from plone.pgthumbor.scaling import ThumborImageScaling
+
+        _setup_env(monkeypatch)
+        ctx = MagicMock()
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        request = MagicMock()
+
+        scaling = ThumborImageScaling(ctx, request)
+        result = scaling._scale_url("uid123", "jpeg")
+        assert "@@images/uid123.jpeg" in result

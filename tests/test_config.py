@@ -94,6 +94,75 @@ class TestGetThumborConfig:
 
         assert cfg is None
 
+    def test_smart_cropping_from_env(self, monkeypatch):
+        from plone.pgthumbor.config import get_thumbor_config
+
+        env_override(
+            monkeypatch,
+            PGTHUMBOR_SERVER_URL="http://thumbor:8888",
+            PGTHUMBOR_SECURITY_KEY="key",
+            PGTHUMBOR_SMART_CROPPING="true",
+        )
+        cfg = get_thumbor_config()
+        assert cfg.smart_cropping is True
+
+    def test_paranoid_mode_from_env(self, monkeypatch):
+        from plone.pgthumbor.config import get_thumbor_config
+
+        env_override(
+            monkeypatch,
+            PGTHUMBOR_SERVER_URL="http://thumbor:8888",
+            PGTHUMBOR_SECURITY_KEY="key",
+            PGTHUMBOR_PARANOID_MODE="yes",
+        )
+        cfg = get_thumbor_config()
+        assert cfg.paranoid_mode is True
+
+    def test_registry_fallback_for_smart_cropping(self, monkeypatch):
+        from plone.pgthumbor.config import get_thumbor_config
+        from unittest.mock import MagicMock
+
+        env_override(
+            monkeypatch,
+            PGTHUMBOR_SERVER_URL="http://thumbor:8888",
+            PGTHUMBOR_SECURITY_KEY="key",
+        )
+        mock_registry = MagicMock()
+        mock_settings = MagicMock()
+        mock_settings.smart_cropping = True
+        mock_settings.paranoid_mode = False
+        mock_registry.forInterface.return_value = mock_settings
+
+        monkeypatch.setattr(
+            "zope.component.queryUtility",
+            lambda iface: mock_registry,
+        )
+        cfg = get_thumbor_config()
+        assert cfg.smart_cropping is True
+        assert cfg.paranoid_mode is False
+
+    def test_registry_fallback_for_paranoid_mode(self, monkeypatch):
+        from plone.pgthumbor.config import get_thumbor_config
+        from unittest.mock import MagicMock
+
+        env_override(
+            monkeypatch,
+            PGTHUMBOR_SERVER_URL="http://thumbor:8888",
+            PGTHUMBOR_SECURITY_KEY="key",
+        )
+        mock_registry = MagicMock()
+        mock_settings = MagicMock()
+        mock_settings.smart_cropping = False
+        mock_settings.paranoid_mode = True
+        mock_registry.forInterface.return_value = mock_settings
+
+        monkeypatch.setattr(
+            "zope.component.queryUtility",
+            lambda iface: mock_registry,
+        )
+        cfg = get_thumbor_config()
+        assert cfg.paranoid_mode is True
+
 
 class TestThumborConfig:
     """Test ThumborConfig dataclass."""

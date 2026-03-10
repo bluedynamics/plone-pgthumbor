@@ -137,6 +137,16 @@ for compatibility with Thumbor's async event loop.
 These are standard Thumbor settings.
 When enabled, format conversion is transparent -- the same signed URL serves different formats based on content negotiation.
 
+### Smart cropping (detectors)
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `DETECTORS` | list of strings | `[]` | Thumbor detector modules for `/smart/` URL support. Example: `['thumbor.detectors.face_detector', 'thumbor.detectors.feature_detector']`. Requires `opencv-python-headless` (included in the Docker image). |
+
+Detectors run in-process when a URL contains `/smart/`.
+Face detection is tried first; feature detection is used as fallback.
+On the Plone side, enable `smart_cropping` in the registry so URLs include `/smart/`.
+
 ### Result storage (optional)
 
 Thumbor's built-in result storage caches the final processed images.

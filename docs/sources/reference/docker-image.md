@@ -92,6 +92,19 @@ No `thumbor.conf` editing is required.
 | `THUMBOR_AUTO_WEBP` | `"true"` | Automatically convert to WebP when the browser supports it. |
 | `THUMBOR_AUTO_AVIF` | `"false"` | Automatically convert to AVIF when the browser supports it (more CPU-intensive). |
 
+### Smart cropping
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `THUMBOR_DETECTORS` | `""` | Comma-separated Thumbor detector modules for `/smart/` URLs. Empty disables detection. Example: `thumbor.detectors.face_detector,thumbor.detectors.feature_detector`. |
+
+The Docker image includes `opencv-python-headless`, which provides the
+OpenCV backend required by Thumbor's built-in detectors. No additional
+packages need to be installed.
+
+On the Plone side, also enable `smart_cropping` in the registry
+(`@@thumbor-settings`) so that Plone generates URLs with `/smart/`.
+
 ### Cache-Control headers
 
 These settings only take effect when the auth handler is loaded

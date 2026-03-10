@@ -148,6 +148,51 @@ The result storage caches
 each format variant separately.
 :::
 
+## Smart cropping
+
+### `DETECTORS`
+
+Thumbor's detector modules for content-aware cropping via `/smart/` URLs.
+When configured, Thumbor runs OpenCV-based detection to identify focal
+points (faces, corners, edges) and crops around them:
+
+```python
+DETECTORS = [
+    "thumbor.detectors.face_detector",
+    "thumbor.detectors.feature_detector",
+]
+```
+
+Face detection is tried first. If no faces are found, feature detection
+(corners/edges) is used as fallback. Detection runs in-process and results
+are cached by Thumbor's result storage, so each unique URL triggers
+detection only once.
+
+Available detectors:
+
+- `thumbor.detectors.face_detector` -- frontal face detection (Haar cascade)
+- `thumbor.detectors.feature_detector` -- corner/edge detection (good-features-to-track)
+- `thumbor.detectors.profile_detector` -- side profile face detection
+- `thumbor.detectors.glasses_detector` -- glasses detection (supplements face detector)
+
+Can be configured via environment variable:
+
+```python
+import os
+_detectors = os.environ.get("THUMBOR_DETECTORS", "")
+if _detectors:
+    DETECTORS = [d.strip() for d in _detectors.split(",") if d.strip()]
+```
+
+:::{note}
+The {doc}`pre-built Docker image <../reference/docker-image>` includes
+`opencv-python-headless`. If running Thumbor without the Docker image,
+install it manually: `pip install opencv-python-headless`.
+
+On the Plone side, also enable `smart_cropping` in the registry
+(`@@thumbor-settings`) so that Plone generates URLs with `/smart/`.
+:::
+
 ## Result storage
 
 ### `RESULT_STORAGE`
@@ -336,6 +381,11 @@ ALLOW_UNSAFE_URL = False
 # Auto-convert to modern formats when browser supports them
 AUTO_WEBP = True
 AUTO_AVIF = False
+
+# Smart cropping (requires opencv-python-headless, included in Docker image)
+_detectors = os.environ.get("THUMBOR_DETECTORS", "")
+if _detectors:
+    DETECTORS = [d.strip() for d in _detectors.split(",") if d.strip()]
 
 # Result storage
 RESULT_STORAGE = "thumbor.result_storages.file_storage"

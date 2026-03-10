@@ -102,6 +102,52 @@ When `True`, Thumbor accepts URLs prefixed with `/unsafe/` without HMAC
 verification.
 Useful for development only.
 
+## Automatic image format conversion
+
+### `AUTO_WEBP`
+
+Automatically convert images to WebP when the browser's `Accept` header
+includes `image/webp`.
+Default: `True`.
+
+```python
+AUTO_WEBP = True
+```
+
+WebP typically reduces file size by 25-35% compared to JPEG at equivalent
+quality.
+All modern browsers support WebP.
+
+### `AUTO_AVIF`
+
+Automatically convert images to AVIF when the browser's `Accept` header
+includes `image/avif`.
+Default: `False` (opt-in).
+
+```python
+AUTO_AVIF = False
+```
+
+AVIF offers better compression than WebP but requires significantly more
+CPU for encoding.
+Enable this if your Thumbor server has sufficient compute
+capacity.
+
+Both settings can be configured via environment variables:
+
+```python
+import os
+AUTO_WEBP = os.environ.get("THUMBOR_AUTO_WEBP", "true").lower() in ("true", "1", "yes")
+AUTO_AVIF = os.environ.get("THUMBOR_AUTO_AVIF", "false").lower() in ("true", "1", "yes")
+```
+
+:::{note}
+Format conversion is transparent -- the same signed Thumbor URL serves
+different formats based on content negotiation.
+The result storage caches
+each format variant separately.
+:::
+
 ## Result storage
 
 ### `RESULT_STORAGE`
@@ -286,6 +332,10 @@ HANDLER_LISTS = [
 # Security
 SECURITY_KEY = os.environ.get("THUMBOR_SECURITY_KEY", "change-me")
 ALLOW_UNSAFE_URL = False
+
+# Auto-convert to modern formats when browser supports them
+AUTO_WEBP = True
+AUTO_AVIF = False
 
 # Result storage
 RESULT_STORAGE = "thumbor.result_storages.file_storage"

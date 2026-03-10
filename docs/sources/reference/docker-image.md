@@ -85,6 +85,13 @@ No `thumbor.conf` editing is required.
 | `PGTHUMBOR_PLONE_AUTH_URL` | `""` | Internal Plone URL for auth verification. Empty disables the auth handler entirely. |
 | `PGTHUMBOR_AUTH_CACHE_TTL` | `60` | Auth cache lifetime in seconds. |
 
+### Automatic image format conversion
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `THUMBOR_AUTO_WEBP` | `"true"` | Automatically convert to WebP when the browser supports it. |
+| `THUMBOR_AUTO_AVIF` | `"false"` | Automatically convert to AVIF when the browser supports it (more CPU-intensive). |
+
 ### Cache-Control headers
 
 These settings only take effect when the auth handler is loaded

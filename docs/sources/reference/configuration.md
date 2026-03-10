@@ -103,6 +103,16 @@ for compatibility with Thumbor's async event loop.
 | `PGTHUMBOR_PLONE_AUTH_URL` | string | `""` | Internal URL of the Plone site (for example, `http://plone-internal:8080/Plone`). Used by the auth handler to call `@thumbor-auth`. Required for 3-segment authenticated URLs. |
 | `PGTHUMBOR_AUTH_CACHE_TTL` | integer | `60` | Auth result cache lifetime in seconds. Cached per `(content_zoid, cookie)` pair to avoid a Plone round-trip on every image request. |
 
+### Automatic image format conversion
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `AUTO_WEBP` | boolean | `True` | Automatically convert images to WebP when the browser's `Accept` header includes `image/webp`. |
+| `AUTO_AVIF` | boolean | `False` | Automatically convert images to AVIF when the browser's `Accept` header includes `image/avif`. More CPU-intensive than WebP; opt-in. |
+
+These are standard Thumbor settings.
+When enabled, format conversion is transparent -- the same signed URL serves different formats based on content negotiation.
+
 ### Result storage (optional)
 
 Thumbor's built-in result storage caches the final processed images.

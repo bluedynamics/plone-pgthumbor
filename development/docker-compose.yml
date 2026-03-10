@@ -23,32 +23,14 @@ services:
       PGTHUMBOR_DSN: "dbname=zodb user=zodb password=zodb host=postgres"
       THUMBOR_SECURITY_KEY: "dev-secret-key"
       ALLOW_UNSAFE_URL: "True"
-      # Internal Plone URL — bypasses nginx, used for @thumbor-auth subrequests
-      PGTHUMBOR_PLONE_AUTH_URL: "http://plone:8080/Plone"
+      # Auth subrequests go to Plone running on the host
+      PGTHUMBOR_PLONE_AUTH_URL: "http://host.docker.internal:8081/Plone"
       PGTHUMBOR_AUTH_CACHE_TTL: "60"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
-
-  plone:
-    build:
-      context: ../../..
-      dockerfile: sources/plone-pgthumbor/development/plone/Dockerfile
-    command: ["start"]
-    environment:
-      PGJSONB_DSN: "dbname=zodb user=zodb password=zodb host=postgres port=5432"
-      SITE: "Plone"
-      TYPE: "classic"
-      PROFILES: "plone.pgcatalog:default,plone.pgthumbor:default"
-      # Public URL used by Plone to generate Thumbor image URLs in HTML.
-      # Must be the nginx-facing URL so browsers can reach it.
-      PGTHUMBOR_SERVER_URL: "http://localhost:8080/thumbor"
-      PGTHUMBOR_SECURITY_KEY: "dev-secret-key"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      thumbor:
-        condition: service_started
 
   nginx:
     image: nginx:alpine
@@ -56,8 +38,9 @@ services:
       - "8080:80"
     volumes:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
-      - plone
       - thumbor
 
 volumes:

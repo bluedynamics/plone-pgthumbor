@@ -12,12 +12,9 @@ from plone.pgcatalog.pool import get_pool
 from plone.pgcatalog.pool import get_request_connection
 from plone.pgthumbor.blob import get_blob_ids
 from plone.pgthumbor.config import get_thumbor_config
-from plone.pgthumbor.interfaces import IThumborSettings
 from plone.pgthumbor.url import scale_mode_to_thumbor
 from plone.pgthumbor.url import thumbor_url
-from plone.registry.interfaces import IRegistry
 from ZODB.utils import u64
-from zope.component import queryUtility
 
 import logging
 
@@ -28,7 +25,7 @@ logger = logging.getLogger(__name__)
 _SKIP_THUMBOR_TYPES = {"image/svg+xml"}
 
 
-def _needs_auth_url(context, zoid: int) -> bool:
+def _needs_auth_url(context, zoid: int, paranoid_mode: bool = False) -> bool:
     """Return True if content_zoid should be appended to the Thumbor URL.
 
     Paranoid mode: always True — 3-segment URL for every image.
@@ -37,15 +34,8 @@ def _needs_auth_url(context, zoid: int) -> bool:
 
     Fails safe (returns True) if the registry or PG is unavailable.
     """
-    # Check paranoid mode from Plone registry
-    try:
-        registry = queryUtility(IRegistry)
-        if registry is not None:
-            settings = registry.forInterface(IThumborSettings, check=False)
-            if getattr(settings, "paranoid_mode", False):
-                return True
-    except Exception:
-        pass
+    if paranoid_mode:
+        return True
 
     # Direct PG query: check if 'Anonymous' is in allowedRolesAndUsers
     try:
@@ -66,6 +56,59 @@ def _needs_auth_url(context, zoid: int) -> bool:
         return True  # fail safe → use auth URL
 
 
+def _build_thumbor_url(context, data, width, height, mode):
+    """Build a Thumbor URL for the given image data and dimensions.
+
+    Returns None if Thumbor is not applicable (SVG, no config, no blob).
+    """
+    content_type = getattr(data, "contentType", "") if data else ""
+    if content_type in _SKIP_THUMBOR_TYPES:
+        return None
+
+    cfg = get_thumbor_config()
+    if cfg is None:
+        return None
+
+    blob_ids = get_blob_ids(data)
+    if blob_ids is None:
+        return None
+
+    zoid, tid = blob_ids
+
+    # Determine whether to append content_zoid for access control
+    content_zoid = None
+    oid = getattr(context, "_p_oid", None)
+    if isinstance(oid, bytes) and len(oid) == 8:
+        content_zoid_int = u64(oid)
+        if _needs_auth_url(context, content_zoid_int, cfg.paranoid_mode):
+            content_zoid = content_zoid_int
+
+    thumbor_params = scale_mode_to_thumbor(mode, smart_cropping=cfg.smart_cropping)
+
+    return thumbor_url(
+        server_url=cfg.server_url,
+        security_key=cfg.security_key,
+        zoid=zoid,
+        tid=tid,
+        width=width,
+        height=height,
+        unsafe=cfg.unsafe,
+        content_zoid=content_zoid,
+        **thumbor_params,
+    )
+
+
+def _default_scale_url(context, uid, extension, base_url=None):
+    """Default @@images URL (used when parent has no _scale_url)."""
+    if base_url is None:
+        base_url = context.absolute_url()
+    return f"{base_url}/@@images/{uid}.{extension}"
+
+
+# True if installed plone.namedfile has _scale_url (>= 8.0.0a2)
+_HAS_SCALE_URL = hasattr(ImageScale, "_scale_url")
+
+
 class ThumborImageScale(ImageScale):
     """Scale view that returns Thumbor URLs instead of ZODB-stored data.
 
@@ -75,60 +118,40 @@ class ThumborImageScale(ImageScale):
     - When Thumbor is not configured
     """
 
-    _thumbor_url = None  # Set in __init__ if Thumbor is applicable
+    _thumbor_url = None
 
     def __init__(self, context, request, **info):
-        # Let parent set up all standard attributes first
         super().__init__(context, request, **info)
+        # With new plone.namedfile, _scale_url was already called by
+        # parent __init__. With old versions, set up Thumbor URL here.
+        if not _HAS_SCALE_URL and self._thumbor_url is None and "uid" in info:
+            url = _build_thumbor_url(
+                context,
+                self.data,
+                info.get("width", 0) or 0,
+                info.get("height", 0) or 0,
+                info.get("mode", "scale"),
+            )
+            if url:
+                self._thumbor_url = url
+                self.url = url
 
-        # Check if this is an original image (no uid = no scale requested)
-        if "uid" not in info:
-            return
-
-        # Skip Thumbor for SVGs
-        content_type = getattr(self.data, "contentType", "") if self.data else ""
-        if content_type in _SKIP_THUMBOR_TYPES:
-            return
-
-        # Get Thumbor config
-        cfg = get_thumbor_config()
-        if cfg is None:
-            return
-
-        # Get blob IDs from the image data
-        blob_ids = get_blob_ids(self.data)
-        if blob_ids is None:
-            return
-
-        zoid, tid = blob_ids
-        width = info.get("width", 0) or 0
-        height = info.get("height", 0) or 0
-        mode = info.get("mode", "scale")
-
-        # Determine whether to append content_zoid for access control
-        content_zoid = None
-        oid = getattr(context, "_p_oid", None)
-        if isinstance(oid, bytes) and len(oid) == 8:
-            content_zoid_int = u64(oid)
-            if _needs_auth_url(context, content_zoid_int):
-                content_zoid = content_zoid_int
-
-        # Map Plone scale mode to Thumbor params
-        thumbor_params = scale_mode_to_thumbor(mode, smart_cropping=cfg.smart_cropping)
-
-        # Generate Thumbor URL
-        self._thumbor_url = thumbor_url(
-            server_url=cfg.server_url,
-            security_key=cfg.security_key,
-            zoid=zoid,
-            tid=tid,
-            width=width,
-            height=height,
-            unsafe=cfg.unsafe,
-            content_zoid=content_zoid,
-            **thumbor_params,
-        )
-        self.url = self._thumbor_url
+    def _scale_url(self, uid, extension, base_url=None, scale_info=None):
+        """Generate Thumbor URL if possible, otherwise fall back to default."""
+        if scale_info and "uid" in scale_info:
+            url = _build_thumbor_url(
+                self.context,
+                self.data,
+                scale_info.get("width", 0) or 0,
+                scale_info.get("height", 0) or 0,
+                scale_info.get("mode", "scale"),
+            )
+            if url:
+                self._thumbor_url = url
+                return url
+        if _HAS_SCALE_URL:
+            return super()._scale_url(uid, extension, base_url, scale_info=scale_info)
+        return _default_scale_url(self.context, uid, extension, base_url)
 
     def index_html(self):
         """302 redirect to Thumbor URL instead of streaming ZODB data."""
@@ -142,3 +165,21 @@ class ThumborImageScaling(ImageScaling):
     """@@images view override that uses ThumborImageScale."""
 
     _scale_view_class = ThumborImageScale
+
+    def _scale_url(self, uid, extension, base_url=None, scale_info=None):
+        """Generate Thumbor URL for srcset entries."""
+        if scale_info and scale_info.get("fieldname"):
+            data = getattr(self.context, scale_info["fieldname"], None)
+            if data is not None:
+                url = _build_thumbor_url(
+                    self.context,
+                    data,
+                    scale_info.get("width", 0) or 0,
+                    scale_info.get("height", 0) or 0,
+                    scale_info.get("mode", "scale"),
+                )
+                if url:
+                    return url
+        if _HAS_SCALE_URL:
+            return super()._scale_url(uid, extension, base_url, scale_info=scale_info)
+        return _default_scale_url(self.context, uid, extension, base_url)

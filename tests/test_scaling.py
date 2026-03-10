@@ -297,31 +297,13 @@ class TestNeedsAuthUrl:
         ctx._p_oid = struct.pack(">Q", oid_int)
         return ctx
 
-    def test_paranoid_mode_always_returns_true(self, monkeypatch):
+    def test_paranoid_mode_always_returns_true(self):
         """Paranoid mode → always return True regardless of allowedRolesAndUsers."""
         from plone.pgthumbor import scaling as scaling_mod
 
-        mock_registry = MagicMock()
-        mock_settings = MagicMock()
-        mock_settings.paranoid_mode = True
-        mock_registry.forInterface.return_value = mock_settings
-
-        def mock_query_utility(iface):
-            from plone.registry.interfaces import IRegistry
-
-            if iface is IRegistry:
-                return mock_registry
-            return None
-
-        monkeypatch.setattr(
-            "plone.pgthumbor.scaling.queryUtility",
-            mock_query_utility,
-            raising=False,
-        )
-
         ctx = self._make_context()
         # Even if Anonymous is in allowedRolesAndUsers, paranoid → True
-        result = scaling_mod._needs_auth_url(ctx, 0x42)
+        result = scaling_mod._needs_auth_url(ctx, 0x42, paranoid_mode=True)
         assert result is True
 
     def test_anonymous_in_allowedroles_returns_false(self, monkeypatch):
@@ -335,9 +317,6 @@ class TestNeedsAuthUrl:
 
         mock_pool = MagicMock()
 
-        monkeypatch.setattr(
-            "plone.pgthumbor.scaling.queryUtility", lambda iface: None, raising=False
-        )
         monkeypatch.setattr(
             "plone.pgthumbor.scaling.get_pool", lambda ctx: mock_pool, raising=False
         )
@@ -363,9 +342,6 @@ class TestNeedsAuthUrl:
         mock_pool = MagicMock()
 
         monkeypatch.setattr(
-            "plone.pgthumbor.scaling.queryUtility", lambda iface: None, raising=False
-        )
-        monkeypatch.setattr(
             "plone.pgthumbor.scaling.get_pool", lambda ctx: mock_pool, raising=False
         )
         monkeypatch.setattr(
@@ -387,9 +363,6 @@ class TestNeedsAuthUrl:
 
         mock_pool = MagicMock()
 
-        monkeypatch.setattr(
-            "plone.pgthumbor.scaling.queryUtility", lambda iface: None, raising=False
-        )
         monkeypatch.setattr(
             "plone.pgthumbor.scaling.get_pool", lambda ctx: mock_pool, raising=False
         )
@@ -413,7 +386,9 @@ class TestThumborImageScaleAuthUrl:
         from plone.pgthumbor.scaling import ThumborImageScale
 
         _setup_env(monkeypatch)
-        monkeypatch.setattr(scaling_mod, "_needs_auth_url", lambda ctx, zoid: False)
+        monkeypatch.setattr(
+            scaling_mod, "_needs_auth_url", lambda ctx, zoid, paranoid_mode=False: False
+        )
 
         ctx = MagicMock()
         ctx._p_oid = struct.pack(">Q", 0x42)
@@ -444,7 +419,9 @@ class TestThumborImageScaleAuthUrl:
 
         _setup_env(monkeypatch)
         content_oid_int = 0x99
-        monkeypatch.setattr(scaling_mod, "_needs_auth_url", lambda ctx, zoid: True)
+        monkeypatch.setattr(
+            scaling_mod, "_needs_auth_url", lambda ctx, zoid, paranoid_mode=False: True
+        )
 
         ctx = MagicMock()
         ctx._p_oid = struct.pack(">Q", content_oid_int)

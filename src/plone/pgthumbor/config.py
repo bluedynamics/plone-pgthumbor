@@ -46,8 +46,40 @@ def get_thumbor_config() -> ThumborConfig | None:
         )
         return None
 
+    smart_cropping = os.environ.get("PGTHUMBOR_SMART_CROPPING", "").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+    paranoid_mode = os.environ.get("PGTHUMBOR_PARANOID_MODE", "").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+
+    # Registry fallback for settings not in env
+    if not smart_cropping or not paranoid_mode:
+        try:
+            from plone.pgthumbor.interfaces import IThumborSettings
+            from plone.registry.interfaces import IRegistry
+            from zope.component import queryUtility
+
+            registry = queryUtility(IRegistry)
+            if registry is not None:
+                settings = registry.forInterface(
+                    IThumborSettings, prefix="plone.pgthumbor.settings", check=False
+                )
+                if not smart_cropping:
+                    smart_cropping = getattr(settings, "smart_cropping", False)
+                if not paranoid_mode:
+                    paranoid_mode = getattr(settings, "paranoid_mode", False)
+        except Exception:
+            pass
+
     return ThumborConfig(
         server_url=server_url,
         security_key=security_key,
         unsafe=unsafe,
+        smart_cropping=smart_cropping,
+        paranoid_mode=paranoid_mode,
     )

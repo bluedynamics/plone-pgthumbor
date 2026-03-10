@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.0 (unreleased)
+## 0.3.0 (2026-03-10)
 
 - Wire `smart_cropping` and `paranoid_mode` from env vars / Plone registry into
   Thumbor URL generation.

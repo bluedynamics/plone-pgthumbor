@@ -2,6 +2,12 @@
 
 <!-- diataxis: landing -->
 
+```{image} _static/logo-400.png
+:alt: plone.pgthumbor logo
+:width: 200px
+:align: center
+```
+
 Pillow-free image scaling for Plone via [Thumbor](https://www.thumbor.org/).
 
 Replaces Plone's `@@images` view with signed Thumbor URLs -- no more in-ZODB

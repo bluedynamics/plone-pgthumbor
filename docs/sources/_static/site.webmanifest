@@ -1,7 +1,7 @@
 {
     "name": "plone.pgthumbor",
     "short_name": "pgthumbor",
-    "description": "Pillow-free image scaling for Plone via Thumbor.",
+    "description": "Offload image scaling from Plone to Thumbor.",
     "start_url": "/plone-pgthumbor/",
     "display": "browser",
     "background_color": "#1a1a2e",

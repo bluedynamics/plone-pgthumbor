@@ -8,10 +8,10 @@
 :align: center
 ```
 
-Pillow-free image scaling for Plone via [Thumbor](https://www.thumbor.org/).
+Offload image scaling from Plone to [Thumbor](https://www.thumbor.org/).
 
 Replaces Plone's `@@images` view with signed Thumbor URLs -- no more in-ZODB
-scale storage, no more write-on-read, no more Pillow in the Plone process.
+scale storage, no more write-on-read, no more scaling in the Plone process.
 Includes [zodb-pgjsonb-thumborblobloader](https://github.com/bluedynamics/zodb-pgjsonb-thumborblobloader),
 a Thumbor 7 loader that reads blobs directly from PostgreSQL.
 

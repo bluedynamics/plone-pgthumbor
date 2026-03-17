@@ -1,6 +1,6 @@
 # plone.pgthumbor
 
-> Plone addon that replaces in-ZODB image scaling (Pillow) with Thumbor.
+> Plone addon that offloads image scaling from Plone to Thumbor.
 > Includes zodb-pgjsonb-thumborblobloader for Thumbor-side blob loading from PostgreSQL.
 
 ## Key concepts

@@ -32,7 +32,11 @@ class ThumborSettingsForm(RegistryEditForm):
 
     schema = IThumborSettings
     label = "Thumbor image scaling"
-    description = "Configure Thumbor image scaling and access control."
+    description = (
+        "Server connection (PGTHUMBOR_SERVER_URL, PGTHUMBOR_SECURITY_KEY) "
+        "is configured via environment variables. "
+        "The settings below can additionally be managed here."
+    )
 
     def getContent(self):
         registry = getUtility(IRegistry)
@@ -73,7 +77,7 @@ class ThumborSettingsForm(RegistryEditForm):
     def updateActions(self):
         super().updateActions()
         if "purge_scales" in self.actions:
-            self.actions["purge_scales"].klass = "context destructive"
+            self.actions["purge_scales"].klass = "destructive"
             self.actions["purge_scales"].onclick = _PURGE_CONFIRM_JS
 
 

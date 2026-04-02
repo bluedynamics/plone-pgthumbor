@@ -58,6 +58,17 @@ class TestIThumborSettings:
         assert "unsafe" not in IThumborSettings
 
 
+class TestFormDescription:
+    """Test that the form description mentions env var configuration."""
+
+    def test_description_mentions_env_vars(self):
+        from plone.pgthumbor.controlpanel import ThumborSettingsForm
+
+        desc = ThumborSettingsForm.description
+        assert "PGTHUMBOR_SERVER_URL" in desc
+        assert "PGTHUMBOR_SECURITY_KEY" in desc
+
+
 class TestGetContent:
     """Test ThumborSettingsForm.getContent() method."""
 
@@ -108,13 +119,13 @@ class TestHandleSave:
         from plone.pgthumbor.controlpanel import ThumborSettingsForm
 
         form = ThumborSettingsForm.__new__(ThumborSettingsForm)
-        form.extractData = MagicMock(return_value=({"server_url": "http://t:8888"}, []))
+        form.extractData = MagicMock(return_value=({"smart_cropping": True}, []))
         form.applyChanges = MagicMock()
         form.formErrorsMessage = "Errors"
 
         form.handleSave(form, action=MagicMock())
 
-        form.applyChanges.assert_called_once_with({"server_url": "http://t:8888"})
+        form.applyChanges.assert_called_once_with({"smart_cropping": True})
         assert form.status == "Changes saved."
 
     def test_save_with_errors_does_not_apply(self):
@@ -201,5 +212,5 @@ class TestUpdateActions:
         ):
             form.updateActions()
 
-        assert "destructive" in action_obj.klass
+        assert action_obj.klass == "destructive"
         assert action_obj.onclick == _PURGE_CONFIRM_JS

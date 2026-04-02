@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.0 (unreleased)
+## 0.4.0 (2026-04-02)
 
 - Add browser layer `IPlonePgthumborLayer` and bind all views, services,
   and adapter overrides to it.  This enables clean uninstall via

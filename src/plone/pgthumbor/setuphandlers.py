@@ -6,6 +6,25 @@ from Products.Five import BrowserView
 from zope.component import getUtility
 
 
+_REMOVED_REGISTRY_KEYS = (
+    "plone.pgthumbor.settings.server_url",
+    "plone.pgthumbor.settings.security_key",
+    "plone.pgthumbor.settings.unsafe",
+)
+
+
+def upgrade_to_3(context):
+    """Remove server_url, security_key, and unsafe from registry.
+
+    These fields are configured exclusively via environment variables
+    and were never read from the registry.
+    """
+    registry = getUtility(IRegistry)
+    for key in _REMOVED_REGISTRY_KEYS:
+        if key in registry.records:
+            del registry.records[key]
+
+
 def post_install(context):
     """Register IThumborSettings in the Plone registry."""
     registry = getUtility(IRegistry)
@@ -18,7 +37,7 @@ class SetupView(BrowserView):
     def __call__(self):
         registry = getUtility(IRegistry)
         lines = ["Registry diagnostics:"]
-        key = "plone.pgthumbor.settings.server_url"
+        key = "plone.pgthumbor.settings.smart_cropping"
 
         # Check all access paths
         lines.append(f"key in registry: {key in registry}")
@@ -43,7 +62,7 @@ class SetupView(BrowserView):
                 check=False,
             )
             lines.append(
-                f"forInterface(check=False) OK: server_url={proxy.server_url!r}"
+                f"forInterface(check=False) OK: smart_cropping={proxy.smart_cropping!r}"
             )
         except Exception as e:
             lines.append(f"forInterface(check=False) FAILED: {e}")
@@ -55,7 +74,7 @@ class SetupView(BrowserView):
                 prefix="plone.pgthumbor.settings",
             )
             lines.append(
-                f"forInterface(check=True) OK: server_url={proxy.server_url!r}"
+                f"forInterface(check=True) OK: smart_cropping={proxy.smart_cropping!r}"
             )
         except KeyError as e:
             lines.append(f"forInterface(check=True) FAILED: {e}")

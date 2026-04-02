@@ -70,4 +70,13 @@
       file="imagecropping.zcml"
       />
 
+  <!-- Upgrade steps -->
+  <genericsetup:upgradeStep
+      title="Remove dead registry keys (server_url, security_key, unsafe)"
+      profile="plone.pgthumbor:default"
+      source="2"
+      destination="3"
+      handler=".setuphandlers.upgrade_to_3"
+      />
+
 </configure>

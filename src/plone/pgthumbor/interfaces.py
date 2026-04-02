@@ -34,29 +34,11 @@ class ICropProvider(Interface):
 class IThumborSettings(Interface):
     """Plone registry settings for Thumbor integration.
 
-    Environment variables take precedence over these settings.
+    Only settings that can be toggled via the control panel live here.
+    server_url, security_key, and unsafe are configured exclusively
+    via environment variables (PGTHUMBOR_SERVER_URL, PGTHUMBOR_SECURITY_KEY,
+    PGTHUMBOR_UNSAFE).
     """
-
-    server_url = schema.TextLine(
-        title="Thumbor Server URL",
-        description="Public URL of the Thumbor server (e.g., http://thumbor:8888)",
-        required=False,
-        default="",
-    )
-
-    security_key = schema.TextLine(
-        title="Security Key",
-        description="Shared HMAC-SHA1 key for signing Thumbor URLs",
-        required=False,
-        default="",
-    )
-
-    unsafe = schema.Bool(
-        title="Unsafe Mode",
-        description="Generate unsigned URLs (development only!)",
-        required=False,
-        default=False,
-    )
 
     smart_cropping = schema.Bool(
         title="Smart Cropping",

@@ -30,20 +30,32 @@ class TestThumborSettingsForm:
 
 
 class TestIThumborSettings:
-    """Test IThumborSettings interface has the paranoid_mode field."""
+    """Test IThumborSettings interface has only registry-backed fields."""
+
+    def test_smart_cropping_field_exists(self):
+        from plone.pgthumbor.interfaces import IThumborSettings
+
+        assert "smart_cropping" in IThumborSettings
 
     def test_paranoid_mode_field_exists(self):
         from plone.pgthumbor.interfaces import IThumborSettings
 
         assert "paranoid_mode" in IThumborSettings
 
-    def test_paranoid_mode_default_false(self):
+    def test_server_url_removed(self):
         from plone.pgthumbor.interfaces import IThumborSettings
-        from zope import schema
 
-        field = IThumborSettings["paranoid_mode"]
-        assert isinstance(field, schema.Bool)
-        assert field.default is False
+        assert "server_url" not in IThumborSettings
+
+    def test_security_key_removed(self):
+        from plone.pgthumbor.interfaces import IThumborSettings
+
+        assert "security_key" not in IThumborSettings
+
+    def test_unsafe_removed(self):
+        from plone.pgthumbor.interfaces import IThumborSettings
+
+        assert "unsafe" not in IThumborSettings
 
 
 class TestGetContent:

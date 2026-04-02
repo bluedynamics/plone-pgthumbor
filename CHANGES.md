@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0 (2026-04-02)
+
+- Remove `server_url`, `security_key`, and `unsafe` from controlpanel and
+  registry. These settings are configured exclusively via environment variables
+  (`PGTHUMBOR_SERVER_URL`, `PGTHUMBOR_SECURITY_KEY`, `PGTHUMBOR_UNSAFE`).
+- Controlpanel now shows env-var configuration hint in the description.
+- Upgrade step (v2 -> v3) deletes orphaned registry records from existing sites.
+- Purge button uses alert styling.
+- Closes [#2](https://github.com/bluedynamics/plone-pgthumbor/issues/2).
+
 ## 0.4.0 (2026-04-02)
 
 - Add browser layer `IPlonePgthumborLayer` and bind all views, services,

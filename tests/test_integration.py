@@ -160,10 +160,11 @@ class TestConfigInterface:
         from plone.pgthumbor.interfaces import IThumborSettings
 
         names = list(IThumborSettings.names())
-        assert "server_url" in names
-        assert "security_key" in names
-        assert "unsafe" in names
         assert "smart_cropping" in names
+        assert "paranoid_mode" in names
+        assert "server_url" not in names
+        assert "security_key" not in names
+        assert "unsafe" not in names
 
     def test_config_dataclass_matches_interface(self):
         """Config dataclass should have matching fields."""

@@ -54,8 +54,8 @@ class TestSetupView:
         values.__iter__ = MagicMock(
             return_value=iter(
                 [
-                    "plone.pgthumbor.settings.server_url",
-                    "plone.pgthumbor.settings.security_key",
+                    "plone.pgthumbor.settings.smart_cropping",
+                    "plone.pgthumbor.settings.paranoid_mode",
                 ]
                 if key_present
                 else []
@@ -68,7 +68,7 @@ class TestSetupView:
 
         if for_interface_ok:
             proxy = MagicMock()
-            proxy.server_url = "http://thumbor:8888"
+            proxy.smart_cropping = False
             registry.forInterface.return_value = proxy
         else:
             registry.forInterface.side_effect = KeyError("not registered")
@@ -112,7 +112,7 @@ class TestSetupView:
             result = view()
 
         assert "pgthumbor keys in _values:" in result
-        assert "server_url" in result
+        assert "smart_cropping" in result
 
     def test_for_interface_check_false_success(self):
         view, registry = self._make_view()
@@ -121,7 +121,7 @@ class TestSetupView:
             result = view()
 
         assert "forInterface(check=False) OK" in result
-        assert "server_url=" in result
+        assert "smart_cropping=" in result
 
     def test_for_interface_check_true_success(self):
         view, registry = self._make_view()
@@ -138,7 +138,7 @@ class TestSetupView:
             if kwargs.get("check") is False:
                 raise Exception("broken registry")
             proxy = MagicMock()
-            proxy.server_url = "http://thumbor:8888"
+            proxy.smart_cropping = False
             return proxy
 
         registry.forInterface.side_effect = fail_on_check_false
@@ -156,7 +156,7 @@ class TestSetupView:
             if kwargs.get("check", True) is not False:
                 raise KeyError("not registered")
             proxy = MagicMock()
-            proxy.server_url = "http://thumbor:8888"
+            proxy.smart_cropping = False
             return proxy
 
         registry.forInterface.side_effect = fail_on_check_true

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0 (unreleased)
+
+- Add browser layer `IPlonePgthumborLayer` and bind all views, services,
+  and adapter overrides to it.  This enables clean uninstall via
+  GenericSetup: removing the layer deactivates all registrations.
+- Add uninstall profile (removes browser layer and control panel configlet).
+
 ## 0.3.0 (2026-03-10)
 
 - Wire `smart_cropping` and `paranoid_mode` from env vars / Plone registry into

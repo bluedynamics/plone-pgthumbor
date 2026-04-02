@@ -18,6 +18,14 @@
       post_handler=".setuphandlers.post_install"
       />
 
+  <genericsetup:registerProfile
+      name="uninstall"
+      title="plone.pgthumbor (uninstall)"
+      description="Uninstall plone.pgthumbor"
+      directory="profiles/uninstall"
+      provides="Products.GenericSetup.interfaces.EXTENSION"
+      />
+
   <!-- @thumbor-auth REST API service -->
   <plone:service
       method="GET"
@@ -25,6 +33,7 @@
       factory=".restapi.ThumborAuthService"
       permission="zope2.Public"
       for="plone.base.interfaces.INavigationRoot"
+      layer=".interfaces.IPlonePgthumborLayer"
       />
 
   <!-- Thumbor settings control panel -->
@@ -33,6 +42,7 @@
       for="Products.CMFPlone.interfaces.IPloneSiteRoot"
       class=".controlpanel.ThumborSettings"
       permission="cmf.ManagePortal"
+      layer=".interfaces.IPlonePgthumborLayer"
       />
 
   <!-- One-time purge of legacy ZODB image scales -->
@@ -41,6 +51,7 @@
       for="Products.CMFPlone.interfaces.IPloneSiteRoot"
       class=".purge_scales.PurgeScalesView"
       permission="cmf.ManagePortal"
+      layer=".interfaces.IPlonePgthumborLayer"
       />
 
   <!-- Setup endpoint (registers registry records in-process) -->
@@ -49,6 +60,7 @@
       for="Products.CMFPlone.interfaces.IPloneSiteRoot"
       class=".setuphandlers.SetupView"
       permission="cmf.ManagePortal"
+      layer=".interfaces.IPlonePgthumborLayer"
       />
 
   <!-- plone.app.imagecropping crop provider (only when addon is installed) -->

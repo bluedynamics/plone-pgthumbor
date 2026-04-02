@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from zope import schema
 from zope.interface import Interface
+from zope.publisher.interfaces.browser import IDefaultBrowserLayer
+
+
+class IPlonePgthumborLayer(IDefaultBrowserLayer):
+    """Browser layer for plone.pgthumbor."""
 
 
 class ICropProvider(Interface):

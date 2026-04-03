@@ -239,9 +239,13 @@ Each scale is a persistent object containing the resized bytes.
 
 This means Pillow is never imported, never invoked, and no annotation objects
 are created in ZODB.
-The only data stored is dimension metadata (uid, width,
-height) -- enough for Plone to generate `<img>` tags with correct `width` and
-`height` attributes, and enough for the catalog to index scale information.
+Dimension metadata (uid, width, height) is held in a
+volatile, in-memory dict that lives only for the lifetime of the adapter
+instance -- nothing is persisted to ZODB, so no `ScalesDict` write transactions
+are created.
+This is enough for Plone to generate `<img>` tags with correct
+`width` and `height` attributes, and enough for the catalog to index scale
+information.
 
 ### ZCML overrides
 
@@ -250,11 +254,22 @@ plone.pgthumbor replaces two Plone components via `overrides.zcml`:
 1. **`@@images` browser page** -- `ThumborImageScaling` replaces
    `plone.namedfile`'s `ImageScaling` for all `IImageScaleTraversable` objects.
    This intercepts every image scale request site-wide.
+   Bound to `IPlonePgthumborLayer`, so it only activates in Plone sites where the
+   add-on is installed.
 
-2. **`IImageScaleStorage` adapter** -- `ThumborScaleStorage` replaces
-   `AnnotationStorage` for all `IImageScaleTraversable` objects.
-   This prevents
-   Pillow from being invoked during scale generation.
+2. **`IImageScaleStorage` adapter** -- A factory function
+   (`thumbor_scale_storage_factory`) is registered for
+   `(IImageScaleTraversable, *)`.
+   The `*` discriminator is necessary because
+   `plone.namedfile` calls `getMultiAdapter((context, modified_callable), IImageScaleStorage)` --
+   the second argument is a callable or `None`, never a request, so a browser-layer
+   discriminator would never match.
+   The factory checks `IPlonePgthumborLayer` on the
+   current request at runtime: if the layer is active, it returns a
+   `ThumborScaleStorage` instance (volatile dict, no Pillow); otherwise it falls
+   back to the standard `AnnotationStorage`.
+   This makes the override safe for Zope
+   instances hosting multiple Plone sites where only some have pgthumbor installed.
 
 These are `overrides.zcml` registrations (not `configure.zcml`), which means they
 take precedence over plone.namedfile's own registrations regardless of ZCML loading

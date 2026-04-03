@@ -113,6 +113,7 @@ middleware
 monorepo
 passthrough
 pgcatalog
+pgthumbor
 portal_catalog
 postgres
 subrequest[s]?

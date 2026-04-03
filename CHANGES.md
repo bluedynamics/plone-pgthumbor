@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.1 (2026-04-03)
+
+- Fix: `IImageScaleStorage` adapter registration now uses `*` as second
+  discriminator instead of `IPlonePgthumborLayer`. The adapter lookup in
+  `plone.namedfile` passes a `modified` callable (not a request), so the
+  layer-based registration never matched — all scales still used the
+  default `AnnotationStorage`.
+  Closes [#4](https://github.com/bluedynamics/plone-pgthumbor/issues/4).
+
 ## 0.6.0 (2026-04-03)
 
 - Fix: `ThumborScaleStorage` no longer writes `ScalesDict` to ZODB.

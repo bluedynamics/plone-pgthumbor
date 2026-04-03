@@ -1,7 +1,9 @@
-"""Thumbor scale storage — no Pillow, no image data.
+"""Thumbor scale storage — no Pillow, no image data, no ZODB writes.
 
 Overrides AnnotationStorage to prevent any actual image scaling.
 Uses pre_scale() for everything — dimension computation only.
+The storage property returns a volatile (non-persistent) dict so that
+no ScalesDict objects are written to ZODB.
 """
 
 from __future__ import annotations
@@ -20,7 +22,26 @@ class ThumborScaleStorage(AnnotationStorage):
     In a Thumbor setup, all scaling is done by the Thumbor server.
     This storage only stores dimension metadata (uid, width, height)
     for catalog metadata and img tag generation. No Pillow is invoked.
+
+    The ``storage`` property returns a plain dict instead of a
+    PersistentMapping/ScalesDict, so no ZODB write transactions are
+    created when pre_scale() stores dimension metadata.
     """
+
+    @property
+    def storage(self):
+        """Return a volatile (non-persistent) dict.
+
+        This replaces the inherited property that returns a ScalesDict
+        (PersistentMapping) stored in IAnnotations. Since Thumbor handles
+        all image scaling, we don't need to persist scale metadata in ZODB.
+        The dict lives only for the lifetime of this adapter instance.
+        """
+        try:
+            return self._volatile_storage
+        except AttributeError:
+            self._volatile_storage = {}
+            return self._volatile_storage
 
     def scale(self, **parameters):
         """Return pre_scale result — no actual image data generation."""

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0 (2026-04-03)
+
+- Fix: `ThumborScaleStorage` no longer writes `ScalesDict` to ZODB.
+  The `storage` property now returns a volatile (non-persistent) dict,
+  eliminating constant write transactions from `pre_scale()`.
+  Closes [#3](https://github.com/bluedynamics/plone-pgthumbor/issues/3).
+
 ## 0.5.0 (2026-04-02)
 
 - Remove `server_url`, `security_key`, and `unsafe` from controlpanel and

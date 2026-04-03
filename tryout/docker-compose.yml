@@ -21,6 +21,7 @@ services:
       PGTHUMBOR_DSN: "dbname=zodb user=zodb password=zodb host=postgres"
       THUMBOR_SECURITY_KEY: "dev-secret-key"
       ALLOW_UNSAFE_URL: "True"
+      THUMBOR_DETECTORS: "thumbor.detectors.face_detector,thumbor.detectors.feature_detector"
       PGTHUMBOR_PLONE_AUTH_URL: "http://plone:8080/Plone"
       PGTHUMBOR_AUTH_CACHE_TTL: "60"
     depends_on:
@@ -37,6 +38,7 @@ services:
       PROFILES: "plone.pgcatalog:default,plone.pgthumbor:default"
       PGTHUMBOR_SERVER_URL: "http://localhost:8080/thumbor"
       PGTHUMBOR_SECURITY_KEY: "dev-secret-key"
+      PGTHUMBOR_SMART_CROPPING: "true"
     depends_on:
       postgres:
         condition: service_healthy

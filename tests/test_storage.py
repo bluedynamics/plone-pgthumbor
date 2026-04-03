@@ -1,8 +1,7 @@
-"""Tests for ThumborScaleStorage — no Pillow, no image data."""
+"""Tests for ThumborScaleStorage — no Pillow, no image data, no ZODB writes."""
 
 from __future__ import annotations
 
-from persistent.mapping import PersistentMapping
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
@@ -11,11 +10,7 @@ def _make_storage():
     from plone.pgthumbor.storage import ThumborScaleStorage
 
     ctx = MagicMock()
-    storage = ThumborScaleStorage(ctx, modified=None)
-    # Bypass IAnnotations by injecting a real PersistentMapping
-    storage._test_storage = PersistentMapping()
-    type(storage).storage = property(lambda self: self._test_storage)
-    return storage
+    return ThumborScaleStorage(ctx, modified=None)
 
 
 class TestThumborScaleStorage:
@@ -86,3 +81,22 @@ class TestThumborScaleStorage:
         uid1 = storage.hash_key(fieldname="image", width=400, height=300)
         uid2 = storage.hash_key(fieldname="image", width=800, height=600)
         assert uid1 != uid2
+
+    def test_storage_is_volatile(self):
+        """storage property returns a plain dict, not a PersistentMapping."""
+        storage = _make_storage()
+        assert type(storage.storage) is dict
+
+    def test_storage_not_persistent(self):
+        """Writing to storage must not touch IAnnotations."""
+        storage = _make_storage()
+        storage.storage["test"] = {"data": "value"}
+        # IAnnotations should never have been accessed
+        storage.context.__getitem__.assert_not_called()
+
+    def test_separate_instances_separate_storage(self):
+        """Each adapter instance has its own volatile storage."""
+        s1 = _make_storage()
+        s2 = _make_storage()
+        s1.storage["key"] = "value"
+        assert "key" not in s2.storage

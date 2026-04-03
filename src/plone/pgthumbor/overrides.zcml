@@ -15,10 +15,12 @@
   <!-- Override scale storage to prevent Pillow invocation and ZODB writes.
        The second discriminator is *, not a browser layer, because
        getMultiAdapter((context, modified_callable_or_None), IImageScaleStorage)
-       never passes a request — IPlonePgthumborLayer would never match. -->
+       never passes a request.  The factory checks IPlonePgthumborLayer
+       at runtime so the override only applies to sites with pgthumbor
+       installed. -->
   <adapter
       for="plone.namedfile.interfaces.IImageScaleTraversable *"
-      factory=".storage.ThumborScaleStorage"
+      factory=".storage.thumbor_scale_storage_factory"
       provides="plone.scale.storage.IImageScaleStorage"
       />
 

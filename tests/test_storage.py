@@ -100,3 +100,51 @@ class TestThumborScaleStorage:
         s2 = _make_storage()
         s1.storage["key"] = "value"
         assert "key" not in s2.storage
+
+
+class TestThumborScaleStorageFactory:
+    """Test that the factory respects the browser layer."""
+
+    def test_returns_thumbor_storage_when_layer_active(self):
+        from plone.pgthumbor.interfaces import IPlonePgthumborLayer
+        from plone.pgthumbor.storage import thumbor_scale_storage_factory
+        from plone.pgthumbor.storage import ThumborScaleStorage
+
+        request = MagicMock()
+        request.__provides__ = None
+        from zope.interface import alsoProvides
+
+        alsoProvides(request, IPlonePgthumborLayer)
+
+        ctx = MagicMock()
+        with patch("plone.pgthumbor.storage.getRequest", return_value=request):
+            result = thumbor_scale_storage_factory(ctx, modified=None)
+
+        assert isinstance(result, ThumborScaleStorage)
+        assert type(result.storage) is dict
+
+    def test_returns_annotation_storage_when_layer_inactive(self):
+        from plone.pgthumbor.storage import thumbor_scale_storage_factory
+        from plone.pgthumbor.storage import ThumborScaleStorage
+        from plone.scale.storage import AnnotationStorage
+
+        request = MagicMock()  # no IPlonePgthumborLayer
+
+        ctx = MagicMock()
+        with patch("plone.pgthumbor.storage.getRequest", return_value=request):
+            result = thumbor_scale_storage_factory(ctx, modified=None)
+
+        assert isinstance(result, AnnotationStorage)
+        assert not isinstance(result, ThumborScaleStorage)
+
+    def test_returns_annotation_storage_when_no_request(self):
+        from plone.pgthumbor.storage import thumbor_scale_storage_factory
+        from plone.pgthumbor.storage import ThumborScaleStorage
+        from plone.scale.storage import AnnotationStorage
+
+        ctx = MagicMock()
+        with patch("plone.pgthumbor.storage.getRequest", return_value=None):
+            result = thumbor_scale_storage_factory(ctx, modified=None)
+
+        assert isinstance(result, AnnotationStorage)
+        assert not isinstance(result, ThumborScaleStorage)

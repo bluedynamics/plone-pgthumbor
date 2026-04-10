@@ -6,6 +6,19 @@
 
 ### 0.1.0 (unreleased)
 
+- Fix access check queries to use the dedicated `allowed_roles` TEXT[]
+  column instead of `idx->'allowedRolesAndUsers'`.
+  `plone-pgcatalog` extracts `allowedRolesAndUsers` into its own
+  column, so the old JSONB lookup returned `NULL` for every migrated
+  object, making `_needs_auth_url()` always return `True` (broken
+  anonymous images) and `@thumbor-auth` always return `401` for
+  3-segment URLs.
+  Affects both `_needs_auth_url` in
+  [scaling.py](https://github.com/bluedynamics/plone-pgthumbor/blob/main/src/plone/pgthumbor/scaling.py)
+  and `ThumborAuthService` in
+  [restapi.py](https://github.com/bluedynamics/plone-pgthumbor/blob/main/src/plone/pgthumbor/restapi.py).
+  See https://github.com/bluedynamics/plone-pgthumbor/issues/5.
+
 - Initial implementation: Thumbor URL generation for Plone image scales.
 
 - Add 3-segment authenticated Thumbor URLs for access-controlled content.

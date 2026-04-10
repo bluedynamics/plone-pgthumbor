@@ -107,7 +107,7 @@ sequenceDiagram
     T->>T: detect 3-segment URL → extract content_zoid
 
     T->>P: GET /@thumbor-auth?zoid={content_zoid} (Cookie + Authorization forwarded)
-    P->>PG: SELECT (idx->'allowedRolesAndUsers' ?| user_principals) FROM object_state
+    P->>PG: SELECT (allowed_roles && user_principals) FROM object_state
     PG->>P: allowed = true/false
     P->>T: 200 OK / 401 Unauthorized
 
@@ -132,7 +132,7 @@ When `@@images` is called for
    HMAC-signed URL.
 
 3. **Access check decides 2-segment vs 3-segment URL.** `_needs_auth_url()` queries
-   PostgreSQL directly: does the object's `allowedRolesAndUsers` JSONB array
+   PostgreSQL directly: does the object's `allowed_roles` TEXT[] column
    contain `'Anonymous'`?
    If yes, the content is public and a 2-segment URL
    suffices.

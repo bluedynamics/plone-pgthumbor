@@ -39,12 +39,14 @@ def _needs_auth_url(context, zoid: int, paranoid_mode: bool = False) -> bool:
     if paranoid_mode:
         return True
 
-    # Direct PG query: check if 'Anonymous' is in allowedRolesAndUsers
+    # Direct PG query: check if 'Anonymous' is in allowed_roles.
+    # plone-pgcatalog stores allowedRolesAndUsers in a dedicated
+    # TEXT[] column (with GIN index), not inside idx JSONB.
     try:
         pool = get_pool(context)
         conn = get_request_connection(pool)
         row = conn.execute(
-            "SELECT ((idx->'allowedRolesAndUsers') ? 'Anonymous') AS is_anon "
+            "SELECT (allowed_roles && ARRAY['Anonymous']::text[]) AS is_anon "
             "FROM object_state WHERE zoid = %s",
             (zoid,),
         ).fetchone()

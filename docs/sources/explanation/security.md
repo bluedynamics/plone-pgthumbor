@@ -98,7 +98,7 @@ If **paranoid mode** is enabled in the Plone registry, always use 3-segment
    (check auth for everything).
 2.
 Otherwise, query PostgreSQL directly: does the object's
-   `idx->'allowedRolesAndUsers'` JSONB array contain `'Anonymous'`?
+   `allowed_roles` TEXT[] column contain `'Anonymous'`?
    - Yes -> content is public, use 2-segment URL.
    - No -> content is restricted, use 3-segment URL.
 3.
@@ -184,18 +184,18 @@ Invalid or
    `Authenticated` tokens that Plone's security indexes use.
 
 3. **Single PG query.** The service checks whether the object's
-   `allowedRolesAndUsers` JSONB array overlaps with the user's principals:
+   `allowed_roles` array overlaps with the user's principals:
 
    ```sql
-   SELECT (idx->'allowedRolesAndUsers' ?| %s::text[]) AS allowed
+   SELECT (allowed_roles && %s::text[]) AS allowed
    FROM object_state WHERE zoid = %s
    ```
 
-   The `?|` operator checks whether the JSONB array contains ANY of the given
-   text values.
-   This is equivalent to Plone's `allowedRolesAndUsers` KeywordIndex
-   lookup, which checks whether any of the user's principals appear in the object's
-   allowed list.
+   `plone-pgcatalog` stores the `allowedRolesAndUsers` index in a dedicated
+   `TEXT[]` column (with a GIN index), not inside the `idx` JSONB blob.
+   The `&&` array-overlap operator checks whether any of the user's
+   principals appear in the object's allowed list.
+   This is equivalent to Plone's `allowedRolesAndUsers` KeywordIndex lookup.
 
 4. **Response.**
 

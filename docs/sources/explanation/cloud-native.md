@@ -266,7 +266,7 @@ sequenceDiagram
 
     Note over Th,P: Internal cluster network (no ingress hop)
     Th->>P: GET /@thumbor-auth?zoid={content_zoid} (Cookie forwarded)
-    P->>PG: SELECT (idx->'allowedRolesAndUsers' ?| principals)
+    P->>PG: SELECT (allowed_roles && principals)
     PG->>P: allowed = true
     P->>Th: 200 OK
 

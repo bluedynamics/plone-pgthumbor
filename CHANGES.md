@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.2 (unreleased)
+## 0.6.2 (2026-04-10)
 
 - Fix: access-check queries now use the dedicated `allowed_roles` TEXT[]
   column instead of `idx->'allowedRolesAndUsers'`. `plone-pgcatalog`

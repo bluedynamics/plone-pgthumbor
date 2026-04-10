@@ -57,4 +57,5 @@ maxdepth: 2
 titlesonly: true
 ---
 develop
+release
 ```

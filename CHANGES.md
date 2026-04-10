@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.2 (unreleased)
+
+- Fix: access-check queries now use the dedicated `allowed_roles` TEXT[]
+  column instead of `idx->'allowedRolesAndUsers'`. `plone-pgcatalog`
+  extracts `allowedRolesAndUsers` into its own column, so the old JSONB
+  lookup returned `NULL` for every migrated object — making
+  `_needs_auth_url()` always return `True` (broken anonymous images) and
+  `@thumbor-auth` always return `401` for 3-segment URLs.
+  Affects both `_needs_auth_url` in `scaling.py` and `ThumborAuthService`
+  in `restapi.py`.
+  Closes [#5](https://github.com/bluedynamics/plone-pgthumbor/issues/5).
+- Docs: the Sphinx reference changelog is now a MyST include of the root
+  `CHANGES.md`, removing the stale hand-maintained copy.
+
 ## 0.6.1 (2026-04-03)
 
 - Fix: `IImageScaleStorage` adapter registration now uses `*` as second

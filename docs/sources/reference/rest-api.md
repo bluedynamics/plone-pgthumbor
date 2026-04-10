@@ -57,15 +57,18 @@ All responses have `Content-Type: application/json`.
 ### SQL query
 
 The service executes a single PostgreSQL query against the `object_state`
-table (managed by `zodb-pgjsonb`).
-It checks whether the JSONB
-`allowedRolesAndUsers` array in the `idx` column overlaps with the
-current user's effective principals:
+table (managed by `zodb-pgjsonb` + `plone-pgcatalog`).
+It checks whether the object's `allowed_roles` TEXT[] column overlaps
+with the current user's effective principals:
 
 ```sql
-SELECT ((idx->'allowedRolesAndUsers') ?| %s::text[]) AS allowed
+SELECT (allowed_roles && %s::text[]) AS allowed
 FROM object_state WHERE zoid = %s
 ```
+
+`plone-pgcatalog` extracts `allowedRolesAndUsers` from the indexed
+data into a dedicated `TEXT[]` column (with a GIN index).
+The `&&` array-overlap operator replaces the old JSONB `?|` lookup.
 
 The first parameter is the list of user principals (obtained from
 `catalog._listAllowedRolesAndUsers(user)`).

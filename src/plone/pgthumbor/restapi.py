@@ -4,8 +4,9 @@ Verifies whether the current user may view a content object identified
 by its ZODB OID.  Used by the Thumbor auth handler to check access before
 delivering images for 3-segment (authenticated) URLs.
 
-Uses a direct PostgreSQL query against object_state.idx (plone-pgcatalog)
-— no ZODB object loading, no security manager switching.
+Uses a direct PostgreSQL query against object_state.allowed_roles
+(plone-pgcatalog) — no ZODB object loading, no security manager
+switching.
 
 Registration (configure.zcml):
     <plone:service
@@ -62,12 +63,14 @@ class ThumborAuthService(Service):
         catalog = getToolByName(self.context, "portal_catalog")
         user_principals = catalog._listAllowedRolesAndUsers(user)
 
-        # Single PG query: does the object's allowedRolesAndUsers overlap with user principals?
+        # Single PG query: does the object's allowed_roles overlap with
+        # user principals?  plone-pgcatalog stores allowedRolesAndUsers in
+        # a dedicated TEXT[] column (with GIN index), not inside idx JSONB.
         try:
             pool = get_pool(self.context)
             conn = get_request_connection(pool)
             row = conn.execute(
-                "SELECT ((idx->'allowedRolesAndUsers') ?| %s::text[]) AS allowed "
+                "SELECT (allowed_roles && %s::text[]) AS allowed "
                 "FROM object_state WHERE zoid = %s",
                 (list(user_principals), zoid),
             ).fetchone()

@@ -2,16 +2,6 @@
     xmlns="http://namespaces.zope.org/zope"
     xmlns:browser="http://namespaces.zope.org/browser">
 
-  <!-- Override @@images view to use Thumbor URL generation -->
-  <browser:page
-      name="images"
-      for="plone.namedfile.interfaces.IImageScaleTraversable"
-      class=".scaling.ThumborImageScaling"
-      allowed_attributes="scale tag"
-      permission="zope2.View"
-      layer=".interfaces.IPlonePgthumborLayer"
-      />
-
   <!-- Override scale storage to prevent Pillow invocation and ZODB writes.
        The second discriminator is *, not a browser layer, because
        getMultiAdapter((context, modified_callable_or_None), IImageScaleStorage)

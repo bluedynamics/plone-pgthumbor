@@ -35,7 +35,15 @@
       for="plone.base.interfaces.INavigationRoot"
       layer=".interfaces.IPlonePgthumborLayer"
       />
-
+  <!-- @@images view to use Thumbor URL generation -->
+  <browser:page
+      name="images"
+      for="plone.namedfile.interfaces.IImageScaleTraversable"
+      class=".scaling.ThumborImageScaling"
+      allowed_attributes="scale tag"
+      permission="zope2.View"
+      layer=".interfaces.IPlonePgthumborLayer"
+      />
   <!-- Thumbor settings control panel -->
   <browser:page
       name="thumbor-settings"

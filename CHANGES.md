@@ -2,7 +2,7 @@
 
 ## 0.6.3 (unreleased)
 
-- No changes yet.
+- move `@@images` put of overrides, it is on a layer.
 
 ## 0.6.2 (2026-04-10)
 

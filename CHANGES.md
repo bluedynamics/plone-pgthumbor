@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.6.3 (unreleased)
+## 0.6.3 (2026-04-13)
 
-- move `@@images` put of overrides, it is on a layer.
+- Move `@@images` put of overrides, it is on a layer.
 
 ## 0.6.2 (2026-04-10)
 

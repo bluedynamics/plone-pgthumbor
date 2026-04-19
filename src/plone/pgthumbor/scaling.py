@@ -6,10 +6,9 @@ Thumbor URLs instead of ZODB-stored scaled images.
 
 from __future__ import annotations
 
+from AccessControl.PermissionRole import rolesForPermissionOn
 from plone.namedfile.scaling import ImageScale
 from plone.namedfile.scaling import ImageScaling
-from plone.pgcatalog.pool import get_pool
-from plone.pgcatalog.pool import get_request_connection
 from plone.pgthumbor.blob import get_blob_ids
 from plone.pgthumbor.config import get_thumbor_config
 from plone.pgthumbor.interfaces import ICropProvider
@@ -27,35 +26,31 @@ logger = logging.getLogger(__name__)
 _SKIP_THUMBOR_TYPES = {"image/svg+xml"}
 
 
-def _needs_auth_url(context, zoid: int, paranoid_mode: bool = False) -> bool:
+def _needs_auth_url(
+    context, zoid: int | None = None, paranoid_mode: bool = False
+) -> bool:
     """Return True if content_zoid should be appended to the Thumbor URL.
 
     Paranoid mode: always True — 3-segment URL for every image.
-    Normal mode: True only if 'Anonymous' is NOT in allowedRolesAndUsers
-                 (i.e. content is not publicly accessible).
+    Normal mode: True only if 'Anonymous' is NOT among the roles that hold
+                 View on ``context`` (i.e. content is not publicly readable).
 
-    Fails safe (returns True) if the registry or PG is unavailable.
+    Uses Zope's in-memory role/permission map (``rolesForPermissionOn``),
+    which is the source of truth that plone-pgcatalog's ``allowed_roles``
+    column merely caches.  No DB round-trip, no pool acquisition, and no
+    catalog-lag skew vs. live workflow state.
+
+    The ``zoid`` argument is kept for back-compat but unused.
     """
     if paranoid_mode:
         return True
 
-    # Direct PG query: check if 'Anonymous' is in allowed_roles.
-    # plone-pgcatalog stores allowedRolesAndUsers in a dedicated
-    # TEXT[] column (with GIN index), not inside idx JSONB.
     try:
-        pool = get_pool(context)
-        conn = get_request_connection(pool)
-        row = conn.execute(
-            "SELECT (allowed_roles && ARRAY['Anonymous']::text[]) AS is_anon "
-            "FROM object_state WHERE zoid = %s",
-            (zoid,),
-        ).fetchone()
-        if row is None:
-            return True  # not in catalog → be conservative
-        return not row["is_anon"]
+        roles = rolesForPermissionOn("View", context) or ()
+        return "Anonymous" not in roles
     except Exception:
         logger.warning(
-            "Failed to check auth requirement for zoid=%d", zoid, exc_info=True
+            "Failed to check auth requirement for context=%r", context, exc_info=True
         )
         return True  # fail safe → use auth URL
 

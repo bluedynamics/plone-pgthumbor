@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.4 (unreleased)
+
+- Fix: `_needs_auth_url()` no longer issues a PostgreSQL query per image.
+  The old implementation looked up `allowed_roles` in `object_state` via
+  a request-scoped pool connection, which saturated the per-pod psycopg
+  pool under cold-cache production load (30 thumbnails per listing page
+  × concurrent anonymous requests = 30 s `PoolTimeout` stacks).
+  Replaced with an in-memory `rolesForPermissionOn("View", context)`
+  lookup — the plone-pgcatalog `allowed_roles` column is a cache of
+  exactly this computation, so the SQL was re-asking a question Zope
+  already knew the answer to. Zero DB round-trips, zero pool pressure,
+  no catalog-lag skew vs. live workflow state.
+  Closes [#8](https://github.com/bluedynamics/plone-pgthumbor/issues/8).
+
 ## 0.6.3 (2026-04-13)
 
 - Move `@@images` put of overrides, it is on a layer.

@@ -292,89 +292,71 @@ class TestScaleModeMapping:
 class TestNeedsAuthUrl:
     """Test _needs_auth_url() helper."""
 
-    def _make_context(self, oid_int=0x42):
-        ctx = MagicMock()
-        ctx._p_oid = struct.pack(">Q", oid_int)
-        return ctx
-
-    def test_paranoid_mode_always_returns_true(self):
-        """Paranoid mode → always return True regardless of allowedRolesAndUsers."""
+    def test_paranoid_mode_always_returns_true(self, monkeypatch):
+        """Paranoid mode → always True, even for Anonymous-readable content."""
         from plone.pgthumbor import scaling as scaling_mod
 
-        ctx = self._make_context()
-        # Even if Anonymous is in allowedRolesAndUsers, paranoid → True
-        result = scaling_mod._needs_auth_url(ctx, 0x42, paranoid_mode=True)
+        monkeypatch.setattr(
+            scaling_mod, "rolesForPermissionOn", lambda p, c: ("Anonymous", "Manager")
+        )
+        result = scaling_mod._needs_auth_url(MagicMock(), 0x42, paranoid_mode=True)
         assert result is True
 
-    def test_anonymous_in_allowedroles_returns_false(self, monkeypatch):
-        """Anonymous in allowedRolesAndUsers → no auth needed → False."""
+    def test_anonymous_has_view_returns_false(self, monkeypatch):
+        """'Anonymous' in View roles → content is publicly readable → False."""
         from plone.pgthumbor import scaling as scaling_mod
 
-        mock_conn = MagicMock()
-        mock_conn.execute.return_value.fetchone.return_value = {
-            "is_anon": True
-        }  # Anonymous present
-
-        mock_pool = MagicMock()
-
         monkeypatch.setattr(
-            "plone.pgthumbor.scaling.get_pool", lambda ctx: mock_pool, raising=False
+            scaling_mod,
+            "rolesForPermissionOn",
+            lambda p, c: ("Anonymous", "Manager", "Authenticated"),
         )
-        monkeypatch.setattr(
-            "plone.pgthumbor.scaling.get_request_connection",
-            lambda pool: mock_conn,
-            raising=False,
-        )
-
-        ctx = MagicMock()
-        result = scaling_mod._needs_auth_url(ctx, 0x42)
+        result = scaling_mod._needs_auth_url(MagicMock(), 0x42)
         assert result is False
 
-    def test_no_anonymous_in_allowedroles_returns_true(self, monkeypatch):
-        """Anonymous NOT in allowedRolesAndUsers → auth needed → True."""
+    def test_anonymous_not_in_view_returns_true(self, monkeypatch):
+        """'Anonymous' absent from View roles → restricted → True."""
         from plone.pgthumbor import scaling as scaling_mod
 
-        mock_conn = MagicMock()
-        mock_conn.execute.return_value.fetchone.return_value = {
-            "is_anon": False
-        }  # Anonymous absent
-
-        mock_pool = MagicMock()
-
         monkeypatch.setattr(
-            "plone.pgthumbor.scaling.get_pool", lambda ctx: mock_pool, raising=False
+            scaling_mod,
+            "rolesForPermissionOn",
+            lambda p, c: ("Manager", "Reviewer", "Editor"),
         )
-        monkeypatch.setattr(
-            "plone.pgthumbor.scaling.get_request_connection",
-            lambda pool: mock_conn,
-            raising=False,
-        )
-
-        ctx = MagicMock()
-        result = scaling_mod._needs_auth_url(ctx, 0x42)
+        result = scaling_mod._needs_auth_url(MagicMock(), 0x42)
         assert result is True
 
-    def test_not_in_catalog_returns_true(self, monkeypatch):
-        """Object not in catalog (None row) → conservative → True."""
+    def test_private_content_returns_true(self, monkeypatch):
+        """Private content (empty role set from ``_what_not_even_god_should_do``) → True."""
         from plone.pgthumbor import scaling as scaling_mod
 
-        mock_conn = MagicMock()
-        mock_conn.execute.return_value.fetchone.return_value = None  # not found
-
-        mock_pool = MagicMock()
-
-        monkeypatch.setattr(
-            "plone.pgthumbor.scaling.get_pool", lambda ctx: mock_pool, raising=False
-        )
-        monkeypatch.setattr(
-            "plone.pgthumbor.scaling.get_request_connection",
-            lambda pool: mock_conn,
-            raising=False,
-        )
-
-        ctx = MagicMock()
-        result = scaling_mod._needs_auth_url(ctx, 0x42)
+        monkeypatch.setattr(scaling_mod, "rolesForPermissionOn", lambda p, c: [])
+        result = scaling_mod._needs_auth_url(MagicMock(), 0x42)
         assert result is True
+
+    def test_zoid_argument_is_unused(self, monkeypatch):
+        """zoid is kept for back-compat; default None must work."""
+        from plone.pgthumbor import scaling as scaling_mod
+
+        monkeypatch.setattr(
+            scaling_mod, "rolesForPermissionOn", lambda p, c: ("Anonymous",)
+        )
+        assert scaling_mod._needs_auth_url(MagicMock()) is False
+        assert scaling_mod._needs_auth_url(MagicMock(), None) is False
+
+    def test_does_not_touch_pg_pool(self, monkeypatch):
+        """No DB/pool imports are invoked on the happy path (regression for issue #8)."""
+        from plone.pgthumbor import scaling as scaling_mod
+
+        monkeypatch.setattr(
+            scaling_mod, "rolesForPermissionOn", lambda p, c: ("Anonymous",)
+        )
+        # If the function tries to reach plone.pgcatalog.pool, scaling_mod
+        # doesn't import it anymore — confirm by attribute absence.
+        assert not hasattr(scaling_mod, "get_pool")
+        assert not hasattr(scaling_mod, "get_request_connection")
+
+        scaling_mod._needs_auth_url(MagicMock(), 0x42)  # should not raise
 
 
 class TestThumborImageScaleAuthUrl:
@@ -528,18 +510,16 @@ class TestThumborImageScaleAuthUrl:
 class TestNeedsAuthUrlExceptionPaths:
     """Test _needs_auth_url() exception handling paths."""
 
-    def test_pg_exception_returns_true(self, monkeypatch):
-        """PG query failure → fail safe → True."""
+    def test_permission_lookup_exception_returns_true(self, monkeypatch):
+        """rolesForPermissionOn failure → fail safe → True."""
         from plone.pgthumbor import scaling as scaling_mod
 
-        monkeypatch.setattr(
-            "plone.pgthumbor.scaling.get_pool",
-            lambda ctx: (_ for _ in ()).throw(Exception("no pool")),
-            raising=False,
-        )
+        def _boom(_perm, _ctx):
+            raise Exception("broken acquisition chain")
 
-        ctx = MagicMock()
-        result = scaling_mod._needs_auth_url(ctx, 0x42)
+        monkeypatch.setattr(scaling_mod, "rolesForPermissionOn", _boom)
+
+        result = scaling_mod._needs_auth_url(MagicMock(), 0x42)
         assert result is True
 
 

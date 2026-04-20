@@ -33,7 +33,14 @@ class TestThumborAuthService:
         catalog._listAllowedRolesAndUsers.return_value = principals
         return catalog
 
-    def _patch_dependencies(self, service, catalog, row):
+    def _patch_dependencies(self, service, catalog, row, storage_conn=True):
+        """Patch REST service dependencies.
+
+        By default (``storage_conn=True``) the storage connection is used
+        — matching the production path where ZODB holds a request-scoped
+        connection.  Set ``storage_conn=False`` to simulate the pool
+        fallback (tests, scripts, non-ZODB contexts).
+        """
         mock_conn = MagicMock()
         mock_conn.execute.return_value.fetchone.return_value = row
         mock_pool = MagicMock()
@@ -44,6 +51,10 @@ class TestThumborAuthService:
             patch(
                 "plone.pgthumbor.restapi.get_request_connection", return_value=mock_conn
             ),
+            patch(
+                "plone.pgthumbor.restapi.get_storage_connection",
+                return_value=mock_conn if storage_conn else None,
+            ),
         ]
         return patches
 
@@ -53,7 +64,7 @@ class TestThumborAuthService:
         catalog = self._mock_catalog(["user:john", "Authenticated", "Anonymous"])
         patches = self._patch_dependencies(service, catalog, {"allowed": True})
 
-        with patches[0], patches[1] as mock_sm, patches[2], patches[3]:
+        with patches[0], patches[1] as mock_sm, patches[2], patches[3], patches[4]:
             mock_sm.return_value.getUser.return_value = MagicMock()
             result = service.render()
 
@@ -66,7 +77,7 @@ class TestThumborAuthService:
         catalog = self._mock_catalog(["user:john", "Authenticated"])
         patches = self._patch_dependencies(service, catalog, {"allowed": False})
 
-        with patches[0], patches[1] as mock_sm, patches[2], patches[3]:
+        with patches[0], patches[1] as mock_sm, patches[2], patches[3], patches[4]:
             mock_sm.return_value.getUser.return_value = MagicMock()
             result = service.render()
 
@@ -95,7 +106,7 @@ class TestThumborAuthService:
         catalog = self._mock_catalog(["user:john", "Authenticated"])
         patches = self._patch_dependencies(service, catalog, None)
 
-        with patches[0], patches[1] as mock_sm, patches[2], patches[3]:
+        with patches[0], patches[1] as mock_sm, patches[2], patches[3], patches[4]:
             mock_sm.return_value.getUser.return_value = MagicMock()
             result = service.render()
 
@@ -110,10 +121,68 @@ class TestThumborAuthService:
         with (
             patch("plone.pgthumbor.restapi.getToolByName", return_value=catalog),
             patch("plone.pgthumbor.restapi.getSecurityManager") as mock_sm,
-            patch("plone.pgthumbor.restapi.get_pool", side_effect=Exception("DB down")),
+            patch(
+                "plone.pgthumbor.restapi.get_storage_connection",
+                side_effect=Exception("DB down"),
+            ),
         ):
             mock_sm.return_value.getUser.return_value = MagicMock()
             result = service.render()
 
         assert service.request.response.status == 503
         assert "error" in json.loads(result)
+
+    def test_prefers_storage_connection_over_pool(self):
+        """Storage conn is used when available; pool is not touched (regression for #8)."""
+        service = self._make_service("000000000000001a")
+        catalog = self._mock_catalog(["user:john", "Authenticated", "Anonymous"])
+
+        storage_conn = MagicMock()
+        storage_conn.execute.return_value.fetchone.return_value = {"allowed": True}
+
+        with (
+            patch("plone.pgthumbor.restapi.getToolByName", return_value=catalog),
+            patch("plone.pgthumbor.restapi.getSecurityManager") as mock_sm,
+            patch(
+                "plone.pgthumbor.restapi.get_storage_connection",
+                return_value=storage_conn,
+            ) as mock_storage,
+            patch("plone.pgthumbor.restapi.get_pool") as mock_pool,
+            patch("plone.pgthumbor.restapi.get_request_connection") as mock_req_conn,
+        ):
+            mock_sm.return_value.getUser.return_value = MagicMock()
+            service.render()
+
+        mock_storage.assert_called_once_with(service.context)
+        # Pool fallback must not be entered when storage conn is available.
+        mock_pool.assert_not_called()
+        mock_req_conn.assert_not_called()
+        storage_conn.execute.assert_called_once()
+
+    def test_falls_back_to_pool_when_no_storage_connection(self):
+        """When storage conn is unavailable (tests, scripts), fall back to pool."""
+        service = self._make_service("000000000000001a")
+        catalog = self._mock_catalog(["user:john", "Authenticated", "Anonymous"])
+
+        pool_conn = MagicMock()
+        pool_conn.execute.return_value.fetchone.return_value = {"allowed": True}
+
+        with (
+            patch("plone.pgthumbor.restapi.getToolByName", return_value=catalog),
+            patch("plone.pgthumbor.restapi.getSecurityManager") as mock_sm,
+            patch(
+                "plone.pgthumbor.restapi.get_storage_connection",
+                return_value=None,
+            ),
+            patch("plone.pgthumbor.restapi.get_pool") as mock_pool,
+            patch(
+                "plone.pgthumbor.restapi.get_request_connection",
+                return_value=pool_conn,
+            ) as mock_req_conn,
+        ):
+            mock_sm.return_value.getUser.return_value = MagicMock()
+            service.render()
+
+        mock_pool.assert_called_once_with(service.context)
+        mock_req_conn.assert_called_once()
+        pool_conn.execute.assert_called_once()

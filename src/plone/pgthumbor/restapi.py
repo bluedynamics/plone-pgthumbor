@@ -23,6 +23,7 @@ from __future__ import annotations
 from AccessControl import getSecurityManager
 from plone.pgcatalog.pool import get_pool
 from plone.pgcatalog.pool import get_request_connection
+from plone.pgcatalog.pool import get_storage_connection
 from plone.rest.service import Service
 from Products.CMFCore.utils import getToolByName
 
@@ -66,9 +67,14 @@ class ThumborAuthService(Service):
         # Single PG query: does the object's allowed_roles overlap with
         # user principals?  plone-pgcatalog stores allowedRolesAndUsers in
         # a dedicated TEXT[] column (with GIN index), not inside idx JSONB.
+        #
+        # Prefer the ZODB storage connection (already held for this request)
+        # so we don't contend on the psycopg pool — under cold-cache load,
+        # the pool becomes the bottleneck (see #8).
         try:
-            pool = get_pool(self.context)
-            conn = get_request_connection(pool)
+            conn = get_storage_connection(self.context)
+            if conn is None:
+                conn = get_request_connection(get_pool(self.context))
             row = conn.execute(
                 "SELECT (allowed_roles && %s::text[]) AS allowed "
                 "FROM object_state WHERE zoid = %s",

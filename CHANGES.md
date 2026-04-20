@@ -14,6 +14,15 @@
   no catalog-lag skew vs. live workflow state.
   Closes [#8](https://github.com/bluedynamics/plone-pgthumbor/issues/8).
 
+- Fix: `@thumbor-auth` REST service now prefers the ZODB storage
+  connection (already held for the request) over the psycopg pool, so
+  per-image auth verification doesn't contend on `pool.getconn()`.
+  The SQL query is unchanged — this is strictly a connection-acquisition
+  change, matching the pattern plone-pgcatalog uses in
+  `_get_pg_read_connection`.  Falls back to the pool when no ZODB
+  storage is in scope (tests, scripts).
+  Related to [#8](https://github.com/bluedynamics/plone-pgthumbor/issues/8).
+
 ## 0.6.3 (2026-04-13)
 
 - Move `@@images` put of overrides, it is on a layer.

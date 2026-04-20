@@ -5,7 +5,7 @@
 project = "plone.pgthumbor"
 copyright = "2026, BlueDynamics Alliance"  # noqa: A001
 author = "Jens Klein and contributors"
-release = "0.6.2"
+release = "0.6.4"
 
 # -- General configuration ---------------------------------------------------
 

@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.4 (unreleased)
+## 0.6.4 (2026-04-20)
 
 - Fix: `_needs_auth_url()` no longer issues a PostgreSQL query per image.
   The old implementation looked up `allowed_roles` in `object_state` via
@@ -25,7 +25,7 @@
 
 ## 0.6.3 (2026-04-13)
 
-- Move `@@images` put of overrides, it is on a layer.
+- Move `@@images` out of overrides, it is on a layer.
 
 ## 0.6.2 (2026-04-10)
 

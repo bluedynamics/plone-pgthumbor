@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.5 (unreleased)
+
+- Nothing changed yet.
+
 ## 0.6.4 (2026-04-20)
 
 - Fix: `_needs_auth_url()` no longer issues a PostgreSQL query per image.

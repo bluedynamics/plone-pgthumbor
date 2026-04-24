@@ -4,8 +4,8 @@
 
 - Feature: add optional file extensions to generated Thumbor URLs.
   Controlled via the `PGTHUMBOR_ADD_EXTENSION` environment variable (default: `false`).
-  When enabled, generated URLs end in `.webp` and Thumbor is forced to serve
-  WebP format via the `format(webp)` filter.
+  When enabled, generated URLs end in `.webp` and Thumbor serves the image
+  in WebP format based on this extension.
 
 ## 0.6.4 (2026-04-20)
 

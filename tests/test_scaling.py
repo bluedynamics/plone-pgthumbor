@@ -882,5 +882,5 @@ class TestThumborImageScaleExtension:
         )
 
         assert scale.url.endswith(".webp")
-        assert "/filters:format(webp)/" in scale.url
+        assert "/filters:format(webp)/" not in scale.url
         assert "/42/ff/42.webp" in scale.url

@@ -94,10 +94,8 @@ def _build_thumbor_url(context, data, width, height, mode, crop=None):
         thumbor_params["smart"] = False
 
     extension = None
-    filters = []
     if cfg.add_extension:
         extension = ".webp"
-        filters.append("format(webp)")
 
     return thumbor_url(
         server_url=cfg.server_url,
@@ -110,7 +108,6 @@ def _build_thumbor_url(context, data, width, height, mode, crop=None):
         content_zoid=content_zoid,
         crop=crop,
         extension=extension,
-        filters=filters or None,
         **thumbor_params,
     )
 

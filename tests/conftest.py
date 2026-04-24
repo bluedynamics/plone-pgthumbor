@@ -11,6 +11,7 @@ def env_override(monkeypatch, **kwargs):
         "PGTHUMBOR_UNSAFE",
         "PGTHUMBOR_SMART_CROPPING",
         "PGTHUMBOR_PARANOID_MODE",
+        "PGTHUMBOR_ADD_EXTENSION",
     ]
     for var in all_vars:
         if var in kwargs:

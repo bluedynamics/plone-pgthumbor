@@ -20,6 +20,7 @@ class ThumborConfig:
     unsafe: bool = False
     smart_cropping: bool = False
     paranoid_mode: bool = False
+    add_extension: bool = False
 
     def __post_init__(self):
         # Strip trailing slash from server_url
@@ -56,6 +57,11 @@ def get_thumbor_config() -> ThumborConfig | None:
         "1",
         "yes",
     )
+    add_extension = os.environ.get("PGTHUMBOR_ADD_EXTENSION", "").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
 
     # Registry fallback for settings not in env
     if not smart_cropping or not paranoid_mode:
@@ -82,4 +88,5 @@ def get_thumbor_config() -> ThumborConfig | None:
         unsafe=unsafe,
         smart_cropping=smart_cropping,
         paranoid_mode=paranoid_mode,
+        add_extension=add_extension,
     )

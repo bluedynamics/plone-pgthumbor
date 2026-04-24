@@ -18,6 +18,7 @@ from ZODB.utils import u64
 from zope.component import queryAdapter
 
 import logging
+import mimetypes
 
 
 logger = logging.getLogger(__name__)
@@ -93,6 +94,10 @@ def _build_thumbor_url(context, data, width, height, mode, crop=None):
         thumbor_params["fit_in"] = True
         thumbor_params["smart"] = False
 
+    extension = None
+    if cfg.add_extension and content_type:
+        extension = mimetypes.guess_extension(content_type)
+
     return thumbor_url(
         server_url=cfg.server_url,
         security_key=cfg.security_key,
@@ -103,6 +108,7 @@ def _build_thumbor_url(context, data, width, height, mode, crop=None):
         unsafe=cfg.unsafe,
         content_zoid=content_zoid,
         crop=crop,
+        extension=extension,
         **thumbor_params,
     )
 

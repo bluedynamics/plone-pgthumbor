@@ -333,3 +333,93 @@ class TestThumborUrlCrop:
         crypto = CryptoURL(key=KEY)
         expected = crypto.generate(image_url="42/ff", width=400, height=300, crop=crop)
         assert path == expected
+
+
+class TestThumborUrlExtension:
+    """Test thumbor_url() with extension parameter."""
+
+    def test_extension_in_url(self):
+        """Extension appears at the end of the image path."""
+        from plone.pgthumbor.url import thumbor_url
+
+        url = thumbor_url(
+            server_url=SERVER,
+            security_key=KEY,
+            zoid=0x42,
+            tid=0xFF,
+            width=400,
+            height=0,
+            extension=".jpg",
+        )
+        assert url.endswith("/42/ff.jpg")
+
+    def test_extension_without_dot(self):
+        """Extension without leading dot is normalized."""
+        from plone.pgthumbor.url import thumbor_url
+
+        url = thumbor_url(
+            server_url=SERVER,
+            security_key=KEY,
+            zoid=0x42,
+            tid=0xFF,
+            width=400,
+            height=0,
+            extension="png",
+        )
+        assert url.endswith("/42/ff.png")
+
+    def test_extension_included_in_signature(self):
+        """The extension is part of the signed image_url."""
+        from libthumbor import CryptoURL
+        from plone.pgthumbor.url import thumbor_url
+
+        url = thumbor_url(
+            server_url=SERVER,
+            security_key=KEY,
+            zoid=0x42,
+            tid=0xFF,
+            width=400,
+            height=0,
+            extension=".webp",
+        )
+        path = url[len(SERVER) :]
+        crypto = CryptoURL(key=KEY)
+        # libthumbor should see "42/ff.webp" as the image_url
+        expected_path = crypto.generate(image_url="42/ff.webp", width=400, height=0)
+        assert path == expected_path
+
+    def test_extension_with_content_zoid(self):
+        """Extension appears after content_zoid in 3-segment URLs."""
+        from plone.pgthumbor.url import thumbor_url
+
+        url = thumbor_url(
+            server_url=SERVER,
+            security_key=KEY,
+            zoid=0x42,
+            tid=0xFF,
+            width=400,
+            height=0,
+            content_zoid=0x1A,
+            extension=".jpg",
+        )
+        assert url.endswith("/42/ff/1a.jpg")
+
+    def test_extension_with_content_zoid_signature(self):
+        """3-segment signature includes the extension."""
+        from libthumbor import CryptoURL
+        from plone.pgthumbor.url import thumbor_url
+
+        url = thumbor_url(
+            server_url=SERVER,
+            security_key=KEY,
+            zoid=0x42,
+            tid=0xFF,
+            width=400,
+            height=0,
+            content_zoid=0x1A,
+            extension=".png",
+        )
+        path = url[len(SERVER) :]
+        crypto = CryptoURL(key=KEY)
+        expected_path = crypto.generate(image_url="42/ff/1a.png", width=400, height=0)
+        assert path == expected_path

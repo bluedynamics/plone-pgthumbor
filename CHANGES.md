@@ -2,7 +2,10 @@
 
 ## 0.6.5 (unreleased)
 
-- Nothing changed yet.
+- Feature: add optional file extensions to generated Thumbor URLs.
+  Controlled via the `PGTHUMBOR_ADD_EXTENSION` environment variable (default: `false`).
+  When enabled, Plone determines the appropriate extension from the image's
+  MIME type and appends it to the image path before signing.
 
 ## 0.6.4 (2026-04-20)
 

@@ -4,8 +4,8 @@
 
 - Feature: add optional file extensions to generated Thumbor URLs.
   Controlled via the `PGTHUMBOR_ADD_EXTENSION` environment variable (default: `false`).
-  When enabled, Plone determines the appropriate extension from the image's
-  MIME type and appends it to the image path before signing.
+  When enabled, generated URLs end in `.webp` and Thumbor is forced to serve
+  WebP format via the `format(webp)` filter.
 
 ## 0.6.4 (2026-04-20)
 

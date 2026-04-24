@@ -881,5 +881,6 @@ class TestThumborImageScaleExtension:
             mimetype="image/png",
         )
 
-        assert scale.url.endswith(".png")
-        assert "/42/ff/42.png" in scale.url
+        assert scale.url.endswith(".webp")
+        assert "/filters:format(webp)/" in scale.url
+        assert "/42/ff/42.webp" in scale.url

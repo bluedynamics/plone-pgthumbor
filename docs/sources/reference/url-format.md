@@ -16,13 +16,19 @@ Used for publicly accessible images (where `Anonymous` is in the
 object's `allowedRolesAndUsers` index).
 
 ```
-{server_url}/{signature}/{operations}/{zoid_hex}/{tid_hex}
+{server_url}/{signature}/{operations}/{zoid_hex}/{tid_hex}{.extension}
 ```
 
 Example:
 
 ```
 http://thumbor:8888/Ab3xY.../300x200/fit-in/smart/2a/ff
+```
+
+With extensions enabled:
+
+```
+http://thumbor:8888/Cd5zZ.../300x200/fit-in/smart/2a/ff.webp
 ```
 
 ### 3-Segment (Authenticated)
@@ -32,13 +38,19 @@ Appends the content object's ZOID so
 the Thumbor auth handler can verify Plone permissions before delivery.
 
 ```
-{server_url}/{signature}/{operations}/{zoid_hex}/{tid_hex}/{content_zoid_hex}
+{server_url}/{signature}/{operations}/{zoid_hex}/{tid_hex}/{content_zoid_hex}{.extension}
 ```
 
 Example:
 
 ```
 http://thumbor:8888/Xk9pQ.../300x200/fit-in/2a/ff/1a
+```
+
+With extensions enabled:
+
+```
+http://thumbor:8888/Yl0rR.../300x200/fit-in/2a/ff/1a.webp
 ```
 
 When `paranoid_mode` is enabled in the Plone registry, all images use the
@@ -62,6 +74,18 @@ replaced with the literal string `unsafe`:
 | `zoid_hex` | Hexadecimal integer | ZODB OID of the `Blob` object (not the content object). Extracted from `NamedBlobImage._blob._p_oid`. |
 | `tid_hex` | Hexadecimal integer | ZODB transaction ID (serial) of the blob. Extracted from `NamedBlobImage._blob._p_serial` after activation. |
 | `content_zoid_hex` | Hexadecimal integer | ZODB OID of the content object that owns the image. Present only in 3-segment authenticated URLs. |
+| `.extension` | string | Optional file extension (e.g. `.webp`). Appended to the image path before signing when enabled. |
+
+## Automatic Format Selection via Extension
+
+When `PGTHUMBOR_ADD_EXTENSION` is enabled (see {doc}`/reference/configuration`), Plone appends `.webp` to the generated Thumbor URLs.
+
+This has two effects:
+
+1. **Format Enforcement**: Thumbor uses the trailing extension to determine the output format. By appending `.webp`, we ensure the image is served as WebP regardless of the browser's `Accept` header.
+2. **Deterministic URLs**: The extension makes the URL more descriptive for search engines and proxy caches.
+
+The extension is included in the string that is cryptographically signed, ensuring that it cannot be tampered with.
 
 ## HMAC-SHA1 Signing
 

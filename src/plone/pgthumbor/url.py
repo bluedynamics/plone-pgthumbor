@@ -18,6 +18,7 @@ def thumbor_url(
     filters: list[str] | None = None,
     content_zoid: int | None = None,
     crop: tuple[tuple[int, int], tuple[int, int]] | None = None,
+    extension: str | None = None,
 ) -> str:
     """Generate a signed (or unsafe) Thumbor URL for a blob.
 
@@ -37,6 +38,8 @@ def thumbor_url(
                       Thumbor auth handler can verify Plone access.
         crop: Optional crop box ``((left, top), (right, bottom))`` in pixels.
               When set, Thumbor crops the source image before resizing.
+        extension: Optional file extension (e.g. ".jpg").
+                   Appended to the image path before signing.
 
     Returns:
         Full Thumbor URL string.
@@ -44,6 +47,11 @@ def thumbor_url(
     image_url = f"{zoid:x}/{tid:x}"
     if content_zoid is not None:
         image_url += f"/{content_zoid:x}"
+
+    if extension:
+        if not extension.startswith("."):
+            extension = f".{extension}"
+        image_url += extension
 
     crypto = CryptoURL(key=security_key)
     kwargs = {

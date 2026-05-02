@@ -824,3 +824,63 @@ class TestCropInScaleUrl:
         )
         assert result.startswith(SERVER)
         assert "10x20:300x400" in result
+
+
+class TestThumborImageScaleExtension:
+    """Test Thumbor image extension support in scaling."""
+
+    def test_extension_disabled_by_default(self, monkeypatch):
+        """By default, no extension is appended."""
+        from plone.pgthumbor.scaling import ThumborImageScale
+
+        _setup_env(monkeypatch)
+        ctx = MagicMock()
+        ctx._p_oid = struct.pack(">Q", 0x42)
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        request = MagicMock()
+        data = _mock_image_data(content_type="image/jpeg")
+
+        scale = ThumborImageScale(
+            ctx,
+            request,
+            data=data,
+            fieldname="image",
+            width=400,
+            height=300,
+            uid="image-400-abc123",
+            mimetype="image/jpeg",
+        )
+
+        assert not scale.url.endswith(".jpg")
+        assert "/42/ff" in scale.url
+
+    def test_extension_enabled_via_env(self, monkeypatch):
+        """When PGTHUMBOR_ADD_EXTENSION is true, extension is appended."""
+        from plone.pgthumbor.scaling import ThumborImageScale
+
+        env_override(
+            monkeypatch,
+            PGTHUMBOR_SERVER_URL=SERVER,
+            PGTHUMBOR_SECURITY_KEY=KEY,
+            PGTHUMBOR_ADD_EXTENSION="true",
+        )
+        ctx = MagicMock()
+        ctx._p_oid = struct.pack(">Q", 0x42)
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        request = MagicMock()
+        data = _mock_image_data(content_type="image/png")
+
+        scale = ThumborImageScale(
+            ctx,
+            request,
+            data=data,
+            fieldname="image",
+            width=400,
+            height=300,
+            uid="image-400-abc123",
+            mimetype="image/png",
+        )
+
+        assert scale.url.endswith(".webp")
+        assert "/filters:format(webp)/" not in scale.url
+        assert "/42/ff/42.webp" in scale.url

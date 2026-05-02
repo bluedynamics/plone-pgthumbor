@@ -93,6 +93,10 @@ def _build_thumbor_url(context, data, width, height, mode, crop=None):
         thumbor_params["fit_in"] = True
         thumbor_params["smart"] = False
 
+    extension = None
+    if cfg.add_extension:
+        extension = ".webp"
+
     return thumbor_url(
         server_url=cfg.server_url,
         security_key=cfg.security_key,
@@ -103,6 +107,7 @@ def _build_thumbor_url(context, data, width, height, mode, crop=None):
         unsafe=cfg.unsafe,
         content_zoid=content_zoid,
         crop=crop,
+        extension=extension,
         **thumbor_params,
     )
 

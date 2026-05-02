@@ -73,6 +73,18 @@ image transformations, consuming server resources and potentially exposing
 private images.
 :::
 
+### `PGTHUMBOR_ADD_EXTENSION`
+
+Append a file extension to the image path before signing.
+
+```bash
+export PGTHUMBOR_ADD_EXTENSION="true"
+```
+
+When enabled, Plone appends `.webp` to the image path (after the ZOID and TID).
+Thumbor then uses this extension to determine the output format.
+This is an alternative to using the `AUTO_WEBP` content negotiation in Thumbor.
+
 ## Plone registry settings
 
 The `IThumborSettings` registry schema provides the following fields.
@@ -134,6 +146,13 @@ When disabled (default), only images on non-public content use the 3-segment
 format.
 Public images use the 2-segment format and skip the auth check for
 better performance.
+
+- Type: `Bool`
+- Default: `False`
+
+### `add_extension`
+
+When enabled, Plone appends `.webp` to the image path.
 
 - Type: `Bool`
 - Default: `False`

@@ -20,6 +20,7 @@ ignored.
 | `PGTHUMBOR_SERVER_URL` | string | (none) | Public URL of the Thumbor server (for example, `http://thumbor:8888`). Required for Thumbor URL generation. Trailing slashes are stripped automatically. |
 | `PGTHUMBOR_SECURITY_KEY` | string | `""` | Shared HMAC-SHA1 key for signing Thumbor URLs. Must match the `SECURITY_KEY` in `thumbor.conf`. Required unless `PGTHUMBOR_UNSAFE` is enabled. |
 | `PGTHUMBOR_UNSAFE` | boolean | `false` | Generate unsigned `/unsafe/` URLs. Accepts `true`, `1`, or `yes` (case-insensitive). For development only. |
+| `PGTHUMBOR_ADD_EXTENSION` | boolean | `false` | Append `.webp` extension to the image path before signing. Forces WebP output. |
 
 If neither `PGTHUMBOR_SECURITY_KEY` nor `PGTHUMBOR_UNSAFE` is set,
 Thumbor URL generation is disabled and Plone falls back to standard
@@ -38,6 +39,7 @@ variables override these values when set.
 | `unsafe` | Bool | `False` | Generate unsigned URLs (development only). |
 | `smart_cropping` | Bool | `False` | Enable Thumbor smart cropping (OpenCV face/feature detection). Applied to `scale` and `cover` modes. |
 | `paranoid_mode` | Bool | `False` | Always verify image access with Plone for every request, even for publicly accessible content. When disabled, only non-public images use the authenticated 3-segment URL format. |
+| `add_extension` | Bool | `False` | Append file extensions to Thumbor URLs. |
 
 ### Crop providers (ICropProvider)
 
@@ -80,6 +82,7 @@ All Thumbor-side settings are configured in `thumbor.conf`.
 |---|---|---|---|
 | `SECURITY_KEY` | string | (none) | Thumbor's HMAC-SHA1 signing key. Must match `PGTHUMBOR_SECURITY_KEY` on the Plone side. |
 | `ALLOW_UNSAFE_URL` | boolean | `False` | Accept unsigned `/unsafe/` URLs. Must match `PGTHUMBOR_UNSAFE` on the Plone side. |
+| `PGTHUMBOR_ADD_EXTENSION` | boolean | `False` | Enable support for file extensions in image paths. |
 
 ### PostgreSQL connection
 

@@ -148,6 +148,28 @@ The result storage caches
 each format variant separately.
 :::
 
+## File Extension Support
+
+### `PGTHUMBOR_ADD_EXTENSION`
+
+Enable support for file extensions in image paths.
+
+```python
+PGTHUMBOR_ADD_EXTENSION = True
+```
+
+When `True`, Thumbor's `zodb-pgjsonb` loader and auth handler correctly strip
+the trailing extension (like `.webp`) from the image path before looking up the
+blob in PostgreSQL or verifying access.
+The extension itself is then used by Thumbor to determine the output format.
+
+This can be set via environment variable:
+
+```python
+import os
+PGTHUMBOR_ADD_EXTENSION = os.environ.get("PGTHUMBOR_ADD_EXTENSION", "false").lower() in ("true", "1", "yes")
+```
+
 ## Smart cropping
 
 ### `DETECTORS`
@@ -381,6 +403,9 @@ ALLOW_UNSAFE_URL = False
 # Auto-convert to modern formats when browser supports them
 AUTO_WEBP = True
 AUTO_AVIF = False
+
+# File extension support
+PGTHUMBOR_ADD_EXTENSION = os.environ.get("PGTHUMBOR_ADD_EXTENSION", "false").lower() in ("true", "1", "yes")
 
 # Smart cropping (requires opencv-python-headless, included in Docker image)
 _detectors = os.environ.get("THUMBOR_DETECTORS", "")

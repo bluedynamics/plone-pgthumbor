@@ -2,7 +2,7 @@
 
 ## 0.6.5 (unreleased)
 
-- Nothing changed yet.
+- Add `cdk8s-plone` to the ecosystem navigation dropdown in the docs.
 
 ## 0.6.4 (2026-04-20)
 

@@ -197,6 +197,16 @@ class TestThumborImageScale:
 
         _setup_env(monkeypatch)
         monkeypatch.setattr(scaling_mod, "_HAS_SCALE_URL", False)
+
+        from plone.pgthumbor.scaling import _default_scale_url
+
+        monkeypatch.setattr(
+            ThumborImageScale,
+            "_scale_url",
+            lambda self, uid, ext, base_url=None, scale_info=None: _default_scale_url(
+                self.context, uid, ext, base_url
+            ),
+        )
         ctx = MagicMock()
         ctx.absolute_url.return_value = "http://plone:8080/doc"
         ctx._p_mtime = None

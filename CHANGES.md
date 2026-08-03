@@ -15,9 +15,10 @@
   `image_scales` catalog metadata) by parsing the deterministic
   `{fieldname}-{width}-{md5}` uid and regenerating the info on the fly —
   restricted to widths registered in `plone.allowed_sizes`. Review
-  hardening on top: the HiDPI srcset attribute propagates manual crops,
-  and srcset() mirrors the parent's edge-case guards (zero-size original,
-  original-size back-fill, unresolvable src scale).
+  hardening on top: srcset() mirrors the parent's edge-case guards
+  (zero-size original, original-size back-fill, unresolvable src scale),
+  and the HiDPI srcset path threads crop info through for scale infos
+  that carry a scale name.
   Closes [#17](https://github.com/bluedynamics/plone-pgthumbor/issues/17).
 
 - Add `cdk8s-plone` to the ecosystem navigation dropdown in the docs.

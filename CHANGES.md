@@ -23,6 +23,11 @@
 
 - Add `cdk8s-plone` to the ecosystem navigation dropdown in the docs.
 
+- Chore: apply ruff 0.16 markdown code-fence formatting to four docs files
+  (pre-existing drift; the QA workflow runs the latest ruff via uvx over
+  the whole repo). Mark up `zope2.Public` as inline code in a security-doc
+  heading so vale's Microsoft.Spacing rule no longer trips on it.
+
 ## 0.6.4 (2026-04-20)
 
 - Fix: `_needs_auth_url()` no longer issues a PostgreSQL query per image.

@@ -108,9 +108,7 @@ class TestRootRelativeForm:
 
     def test_nested_path(self):
         assert (
-            resolve_thumbor_prefix(
-                "/img/thumbor", "https://site-a.example/subsite"
-            )
+            resolve_thumbor_prefix("/img/thumbor", "https://site-a.example/subsite")
             == "https://site-a.example/img/thumbor"
         )
 
@@ -180,9 +178,9 @@ class TestOutputShape:
         ["https://cdn.example/thumbor", "/thumbor", "thumbor"],
     )
     def test_no_trailing_slash(self, server_url):
-        assert not resolve_thumbor_prefix(
-            server_url, "https://plone.example"
-        ).endswith("/")
+        assert not resolve_thumbor_prefix(server_url, "https://plone.example").endswith(
+            "/"
+        )
 
     @pytest.mark.parametrize(
         "server_url,expected_prefix",
@@ -253,9 +251,7 @@ def resolve_thumbor_prefix(server_url: str, nav_root_url: str) -> str:
             has a query / fragment, or is otherwise malformed.
     """
     if not server_url or server_url.strip() != server_url:
-        raise ValueError(
-            "PGTHUMBOR_SERVER_URL is empty or has surrounding whitespace"
-        )
+        raise ValueError("PGTHUMBOR_SERVER_URL is empty or has surrounding whitespace")
     if "?" in server_url or "#" in server_url:
         raise ValueError(
             "PGTHUMBOR_SERVER_URL must not contain a query string or fragment"
@@ -410,30 +406,26 @@ Expected: the three `*_rejected` tests FAIL (no `ValueError` raised), the accept
 Modify [`src/plone/pgthumbor/config.py`](../../../src/plone/pgthumbor/config.py) — replace `__post_init__` with:
 
 ```python
-    def __post_init__(self):
-        from plone.pgthumbor.prefix import _ALLOWED_SCHEMES
+def __post_init__(self):
+    from plone.pgthumbor.prefix import _ALLOWED_SCHEMES
 
-        server_url = self.server_url
-        if not server_url or server_url.strip() != server_url:
-            raise ValueError(
-                "PGTHUMBOR_SERVER_URL is empty or has surrounding whitespace"
-            )
-        if "?" in server_url or "#" in server_url:
-            raise ValueError(
-                "PGTHUMBOR_SERVER_URL must not contain a query string or "
-                "fragment"
-            )
-        if server_url.startswith(_ALLOWED_SCHEMES):
-            from urllib.parse import urlsplit
+    server_url = self.server_url
+    if not server_url or server_url.strip() != server_url:
+        raise ValueError("PGTHUMBOR_SERVER_URL is empty or has surrounding whitespace")
+    if "?" in server_url or "#" in server_url:
+        raise ValueError(
+            "PGTHUMBOR_SERVER_URL must not contain a query string or fragment"
+        )
+    if server_url.startswith(_ALLOWED_SCHEMES):
+        from urllib.parse import urlsplit
 
-            parts = urlsplit(server_url)
-            if not parts.netloc:
-                raise ValueError(
-                    f"PGTHUMBOR_SERVER_URL {server_url!r} has a scheme "
-                    "but no host"
-                )
-        # Normalise: strip trailing slash
-        object.__setattr__(self, "server_url", server_url.rstrip("/"))
+        parts = urlsplit(server_url)
+        if not parts.netloc:
+            raise ValueError(
+                f"PGTHUMBOR_SERVER_URL {server_url!r} has a scheme but no host"
+            )
+    # Normalise: strip trailing slash
+    object.__setattr__(self, "server_url", server_url.rstrip("/"))
 ```
 
 - [ ] **Step 5: Run tests — all pass now**
@@ -696,17 +688,16 @@ import pytest
 @pytest.mark.parametrize(
     "server_url, nav_root, expected_prefix",
     [
-        ("https://cdn.example/thumbor", "https://site-a.example/2019",
-         "https://cdn.example/thumbor"),
-        ("/thumbor", "https://site-a.example/2019",
-         "https://site-a.example/thumbor"),
-        ("thumbor", "https://arch.example/2019",
-         "https://arch.example/2019/thumbor"),
+        (
+            "https://cdn.example/thumbor",
+            "https://site-a.example/2019",
+            "https://cdn.example/thumbor",
+        ),
+        ("/thumbor", "https://site-a.example/2019", "https://site-a.example/thumbor"),
+        ("thumbor", "https://arch.example/2019", "https://arch.example/2019/thumbor"),
     ],
 )
-def test_url_uses_configured_prefix(
-    monkeypatch, server_url, nav_root, expected_prefix
-):
+def test_url_uses_configured_prefix(monkeypatch, server_url, nav_root, expected_prefix):
     from plone.pgthumbor import scaling as scaling_mod
     from plone.pgthumbor.scaling import ThumborImageScale
 
@@ -717,9 +708,7 @@ def test_url_uses_configured_prefix(
     )
     nav_root_mock = MagicMock()
     nav_root_mock.absolute_url.return_value = nav_root
-    monkeypatch.setattr(
-        scaling_mod, "get_navigation_root", lambda c: nav_root_mock
-    )
+    monkeypatch.setattr(scaling_mod, "get_navigation_root", lambda c: nav_root_mock)
 
     ctx = MagicMock()
     ctx.absolute_url.return_value = f"{nav_root}/doc"
@@ -794,9 +783,7 @@ def _make_adapter(monkeypatch, server_url, nav_root):
     )
     nav_root_mock = MagicMock()
     nav_root_mock.absolute_url.return_value = nav_root
-    monkeypatch.setattr(
-        fa_mod, "get_navigation_root", lambda c: nav_root_mock
-    )
+    monkeypatch.setattr(fa_mod, "get_navigation_root", lambda c: nav_root_mock)
 
     field = MagicMock()
     field.__name__ = "image"
@@ -810,9 +797,7 @@ def _make_adapter(monkeypatch, server_url, nav_root):
 class TestScaleViewFromUrl:
     """The download value stored in image_scales metadata."""
 
-    def test_absolute_thumbor_url_stored_as_signed_path_marker(
-        self, monkeypatch
-    ):
+    def test_absolute_thumbor_url_stored_as_signed_path_marker(self, monkeypatch):
         adapter = _make_adapter(
             monkeypatch, "https://cdn.example/thumbor", "https://plone.example"
         )
@@ -821,12 +806,8 @@ class TestScaleViewFromUrl:
         )
         assert stored == "thumbor:/abc/300x200/fit-in/42/ff"
 
-    def test_root_relative_thumbor_url_stored_as_signed_path_marker(
-        self, monkeypatch
-    ):
-        adapter = _make_adapter(
-            monkeypatch, "/thumbor", "https://plone.example"
-        )
+    def test_root_relative_thumbor_url_stored_as_signed_path_marker(self, monkeypatch):
+        adapter = _make_adapter(monkeypatch, "/thumbor", "https://plone.example")
         stored = adapter._scale_view_from_url(
             "https://plone.example/thumbor/abc/300x200/fit-in/42/ff"
         )
@@ -835,9 +816,7 @@ class TestScaleViewFromUrl:
     def test_nav_root_relative_thumbor_url_stored_as_signed_path_marker(
         self, monkeypatch
     ):
-        adapter = _make_adapter(
-            monkeypatch, "thumbor", "https://arch.example/2019"
-        )
+        adapter = _make_adapter(monkeypatch, "thumbor", "https://arch.example/2019")
         stored = adapter._scale_view_from_url(
             "https://arch.example/2019/thumbor/abc/300x200/fit-in/42/ff"
         )
@@ -921,11 +900,9 @@ class ThumborImageScalesFieldAdapter(ImageFieldScales):
         cfg = get_thumbor_config()
         if cfg is not None:
             nav_root = get_navigation_root(self.context)
-            prefix = resolve_thumbor_prefix(
-                cfg.server_url, nav_root.absolute_url()
-            )
+            prefix = resolve_thumbor_prefix(cfg.server_url, nav_root.absolute_url())
             if url.startswith(prefix + "/") or url == prefix:
-                signed_path = url[len(prefix):] or "/"
+                signed_path = url[len(prefix) :] or "/"
                 return f"{THUMBOR_MARKER}{signed_path}"
         return super()._scale_view_from_url(url)
 ```
@@ -973,11 +950,17 @@ KEY = "test-secret-key"
 def _make_brain(download, field="image", width=300, height=200):
     brain = MagicMock()
     brain.image_scales = {
-        field: [{"scales": {"preview": {
-            "download": download,
-            "width": width,
-            "height": height,
-        }}}]
+        field: [
+            {
+                "scales": {
+                    "preview": {
+                        "download": download,
+                        "width": width,
+                        "height": height,
+                    }
+                }
+            }
+        ]
     }
     brain.getURL.return_value = "https://plone.example/folder/doc"
     brain.Title = "An Image"
@@ -1014,12 +997,21 @@ class TestThumborMarkerRendering:
     @pytest.mark.parametrize(
         "server_url, nav_root, expected_prefix",
         [
-            ("https://cdn.example/thumbor", "https://plone.example",
-             "https://cdn.example/thumbor"),
-            ("/thumbor", "https://site-a.example/2019",
-             "https://site-a.example/thumbor"),
-            ("thumbor", "https://arch.example/2019",
-             "https://arch.example/2019/thumbor"),
+            (
+                "https://cdn.example/thumbor",
+                "https://plone.example",
+                "https://cdn.example/thumbor",
+            ),
+            (
+                "/thumbor",
+                "https://site-a.example/2019",
+                "https://site-a.example/thumbor",
+            ),
+            (
+                "thumbor",
+                "https://arch.example/2019",
+                "https://arch.example/2019/thumbor",
+            ),
         ],
     )
     def test_marker_gets_resolved_with_current_prefix(
@@ -1028,9 +1020,7 @@ class TestThumborMarkerRendering:
         view = _make_view(monkeypatch, nav_root, server_url)
         brain = _make_brain("thumbor:/abc/300x200/fit-in/42/ff")
 
-        tag = view._tag_from_brain_image_scales(
-            brain, "image", scale="preview"
-        )
+        tag = view._tag_from_brain_image_scales(brain, "image", scale="preview")
 
         assert tag is not None
         assert f'src="{expected_prefix}/abc/300x200/fit-in/42/ff"' in tag
@@ -1044,26 +1034,17 @@ class TestLegacyDownloadRendering:
         )
         brain = _make_brain("https://legacy.example/foo/bar.jpg")
 
-        tag = view._tag_from_brain_image_scales(
-            brain, "image", scale="preview"
-        )
+        tag = view._tag_from_brain_image_scales(brain, "image", scale="preview")
         assert 'src="https://legacy.example/foo/bar.jpg"' in tag
 
-    def test_legacy_relative_download_concatenated_to_brain_url(
-        self, monkeypatch
-    ):
+    def test_legacy_relative_download_concatenated_to_brain_url(self, monkeypatch):
         view = _make_view(
             monkeypatch, "https://plone.example", "https://cdn.example/thumbor"
         )
         brain = _make_brain("@@images/uid-xyz.jpeg")
 
-        tag = view._tag_from_brain_image_scales(
-            brain, "image", scale="preview"
-        )
-        assert (
-            'src="https://plone.example/folder/doc/@@images/uid-xyz.jpeg"'
-            in tag
-        )
+        tag = view._tag_from_brain_image_scales(brain, "image", scale="preview")
+        assert 'src="https://plone.example/folder/doc/@@images/uid-xyz.jpeg"' in tag
 
 
 class TestMissingOrInvalidMetadata:
@@ -1074,8 +1055,7 @@ class TestMissingOrInvalidMetadata:
         brain = MagicMock()
         brain.image_scales = None
         assert (
-            view._tag_from_brain_image_scales(brain, "image", scale="preview")
-            is None
+            view._tag_from_brain_image_scales(brain, "image", scale="preview") is None
         )
 
     def test_thumbor_marker_without_config_falls_back(self, monkeypatch):
@@ -1085,8 +1065,7 @@ class TestMissingOrInvalidMetadata:
         view = _make_view(monkeypatch, "https://plone.example", server_url=None)
         brain = _make_brain("thumbor:/abc/300x200/42/ff")
         assert (
-            view._tag_from_brain_image_scales(brain, "image", scale="preview")
-            is None
+            view._tag_from_brain_image_scales(brain, "image", scale="preview") is None
         )
 ```
 
@@ -1107,9 +1086,7 @@ from plone.pgthumbor.field_adapter import THUMBOR_MARKER
 class ThumborNavigationRootScaling(NavigationRootScaling):
     """@@image_scale view that resolves Thumbor markers at render time."""
 
-    def _tag_from_brain_image_scales(
-        self, brain, fieldname, scale=None, **kwargs
-    ):
+    def _tag_from_brain_image_scales(self, brain, fieldname, scale=None, **kwargs):
         # Reuse the parent's validation / hidpi / lookup logic by
         # pulling the relevant stored dict ourselves — but we need to
         # handle our custom "thumbor:" marker before the parent's
@@ -1134,10 +1111,8 @@ class ThumborNavigationRootScaling(NavigationRootScaling):
                 # Thumbor not configured anymore; caller falls back
                 # to object-based rendering.
                 return None
-            signed_path = download[len(THUMBOR_MARKER):]
-            prefix = resolve_thumbor_prefix(
-                cfg.server_url, self.context.absolute_url()
-            )
+            signed_path = download[len(THUMBOR_MARKER) :]
+            prefix = resolve_thumbor_prefix(cfg.server_url, self.context.absolute_url())
             src = f"{prefix}{signed_path}"
             return self._render_image_tag(brain, data, src, **kwargs)
 
@@ -1146,8 +1121,9 @@ class ThumborNavigationRootScaling(NavigationRootScaling):
             brain, fieldname, scale=scale, **kwargs
         )
 
-    def _render_image_tag(self, brain, data, src, alt=_marker,
-                          css_class=None, title=_marker, **kwargs):
+    def _render_image_tag(
+        self, brain, data, src, alt=_marker, css_class=None, title=_marker, **kwargs
+    ):
         from plone.namedfile.scaling import _image_tag_from_values, _marker
 
         if title is _marker:

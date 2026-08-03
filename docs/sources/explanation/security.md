@@ -140,7 +140,7 @@ method:
 The auth handler is registered via Thumbor's `HANDLER_LISTS` configuration:
 
 ```python
-HANDLER_LISTS = ['zodb_pgjsonb_thumborblobloader.auth_handler']
+HANDLER_LISTS = ["zodb_pgjsonb_thumborblobloader.auth_handler"]
 ```
 
 `get_handlers()` returns a list of `(url_regex, handler_class, context)` tuples
@@ -206,7 +206,7 @@ Invalid or
    | Object not in catalog | 404 | Unknown object |
    | Database error | 503 | Service unavailable |
 
-### Why zope2.Public permission
+### Why `zope2.Public` permission
 
 The `@thumbor-auth` service is registered with `permission="zope2.Public"` -- it
 is accessible without authentication.

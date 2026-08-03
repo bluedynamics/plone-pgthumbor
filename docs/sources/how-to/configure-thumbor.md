@@ -52,7 +52,6 @@ HANDLER_LISTS = [
     "thumbor.handler_lists.healthcheck",
     "zodb_pgjsonb_thumborblobloader.auth_handler",
 ]
-
 ```
 
 The healthcheck handler must come first so `/healthcheck` is matched before
@@ -80,6 +79,7 @@ Can also be set via the `THUMBOR_SECURITY_KEY` environment variable:
 
 ```python
 import os
+
 SECURITY_KEY = os.environ.get("THUMBOR_SECURITY_KEY", "")
 ```
 
@@ -137,6 +137,7 @@ Both settings can be configured via environment variables:
 
 ```python
 import os
+
 AUTO_WEBP = os.environ.get("THUMBOR_AUTO_WEBP", "true").lower() in ("true", "1", "yes")
 AUTO_AVIF = os.environ.get("THUMBOR_AUTO_AVIF", "false").lower() in ("true", "1", "yes")
 ```
@@ -179,6 +180,7 @@ Can be configured via environment variable:
 
 ```python
 import os
+
 _detectors = os.environ.get("THUMBOR_DETECTORS", "")
 if _detectors:
     DETECTORS = [d.strip() for d in _detectors.split(",") if d.strip()]
@@ -227,6 +229,7 @@ Can be set via environment variable:
 
 ```python
 import os
+
 PGTHUMBOR_DSN = os.environ.get("PGTHUMBOR_DSN", "")
 ```
 
@@ -271,6 +274,7 @@ Can be set via environment variable:
 
 ```python
 import os
+
 PGTHUMBOR_PLONE_AUTH_URL = os.environ.get("PGTHUMBOR_PLONE_AUTH_URL", "")
 ```
 

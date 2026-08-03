@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.6 (unreleased)
+
+- Nothing changed yet.
+
 ## 0.6.5 (2026-08-04)
 
 - Fix: SVG (skip-Thumbor) images no longer emit uid-based scale URLs that

@@ -101,6 +101,105 @@ class TestThumborScaleStorage:
         s1.storage["key"] = "value"
         assert "key" not in s2.storage
 
+    def test_get_or_generate_heals_legacy_uid(self):
+        """A uid-shaped miss regenerates scale info via pre_scale (issue #17):
+        cached HTML and stale image_scales metadata keep working."""
+        storage = _make_storage()
+        healed = {
+            "uid": "image-400-" + "a" * 32,
+            "data": None,
+            "width": 400,
+            "height": 400,
+        }
+
+        with (
+            patch.object(storage, "pre_scale", return_value=dict(healed)) as mock_pre,
+            patch(
+                "plone.pgthumbor.storage._allowed_scale_sizes",
+                return_value={400: (400, 400)},
+            ),
+        ):
+            result = storage.get_or_generate("image-400-" + "b" * 32)
+
+        mock_pre.assert_called_once_with(
+            fieldname="image", width=400, height=400, mode="scale"
+        )
+        assert result["fieldname"] == "image"
+
+    def test_get_or_generate_heals_fieldname_with_dashes(self):
+        """fieldname may contain dashes — parse from the right."""
+        storage = _make_storage()
+
+        with (
+            patch.object(storage, "pre_scale", return_value={"uid": "x"}) as mock_pre,
+            patch(
+                "plone.pgthumbor.storage._allowed_scale_sizes",
+                return_value={200: (200, 200)},
+            ),
+        ):
+            storage.get_or_generate("my-logo-field-200-" + "c" * 32)
+
+        mock_pre.assert_called_once_with(
+            fieldname="my-logo-field", width=200, height=200, mode="scale"
+        )
+
+    def test_get_or_generate_rejects_unregistered_width(self):
+        """Unknown widths 404 — prevents on-demand signing of arbitrary
+        dimensions (cache-filling amplification)."""
+        storage = _make_storage()
+
+        with (
+            patch.object(storage, "pre_scale") as mock_pre,
+            patch(
+                "plone.pgthumbor.storage._allowed_scale_sizes",
+                return_value={400: (400, 400)},
+            ),
+        ):
+            assert storage.get_or_generate("image-999-" + "b" * 32) is None
+
+        mock_pre.assert_not_called()
+
+    def test_get_or_generate_rejects_malformed_uid(self):
+        """Hash part must look like md5-hex; anything else stays a 404."""
+        storage = _make_storage()
+
+        with patch.object(storage, "pre_scale") as mock_pre:
+            assert storage.get_or_generate("image-400-nothex") is None
+            assert storage.get_or_generate("image-400") is None
+
+        mock_pre.assert_not_called()
+
+    def test_get_or_generate_width_zero_means_original(self):
+        """uid 'image-0-<hash>' comes from bare tag()/pre_scale without a
+        width — regenerate with original dimensions."""
+        storage = _make_storage()
+
+        with (
+            patch.object(storage, "pre_scale", return_value={"uid": "x"}) as mock_pre,
+            patch(
+                "plone.pgthumbor.storage._allowed_scale_sizes",
+                return_value={},
+            ),
+        ):
+            storage.get_or_generate("image-0-" + "d" * 32)
+
+        mock_pre.assert_called_once_with(
+            fieldname="image", width=None, height=None, mode="scale"
+        )
+
+    def test_get_or_generate_pre_scale_none_returns_none(self):
+        """pre_scale returning None (missing field/value) stays a 404."""
+        storage = _make_storage()
+
+        with (
+            patch.object(storage, "pre_scale", return_value=None),
+            patch(
+                "plone.pgthumbor.storage._allowed_scale_sizes",
+                return_value={400: (400, 400)},
+            ),
+        ):
+            assert storage.get_or_generate("gone-400-" + "e" * 32) is None
+
 
 class TestThumborScaleStorageFactory:
     """Test that the factory respects the browser layer."""

@@ -2,6 +2,24 @@
 
 ## 0.6.5 (unreleased)
 
+- Fix: SVG (skip-Thumbor) images no longer emit uid-based scale URLs that
+  permanently 404. Root cause was not `purge_scales` but the volatile
+  `ThumborScaleStorage` introduced in 0.6.x: `get_or_generate` reads a
+  fresh empty per-instance dict on every traversal, so *no* uid scale URL
+  could ever resolve — the `plone.scale` annotation is never consulted.
+  Fixed on both ends: skip-types now emit the original field URL with a
+  modification-time cache buster (both plone.namedfile code paths, the
+  legacy `__init__` for 7.x and `_scale_url` for >= 8.0.0a2), the HiDPI
+  `srcset` attribute and the `srcset()` method emit Thumbor URLs, and
+  `get_or_generate` heals legacy uid URLs (cached HTML, stale
+  `image_scales` catalog metadata) by parsing the deterministic
+  `{fieldname}-{width}-{md5}` uid and regenerating the info on the fly —
+  restricted to widths registered in `plone.allowed_sizes`. Review
+  hardening on top: the HiDPI srcset attribute propagates manual crops,
+  and srcset() mirrors the parent's edge-case guards (zero-size original,
+  original-size back-fill, unresolvable src scale).
+  Closes [#17](https://github.com/bluedynamics/plone-pgthumbor/issues/17).
+
 - Add `cdk8s-plone` to the ecosystem navigation dropdown in the docs.
 
 ## 0.6.4 (2026-04-20)

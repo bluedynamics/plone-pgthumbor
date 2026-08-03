@@ -2,7 +2,31 @@
 
 ## 0.6.5 (unreleased)
 
+- Fix: SVG (skip-Thumbor) images no longer emit uid-based scale URLs that
+  permanently 404. Root cause was not `purge_scales` but the volatile
+  `ThumborScaleStorage` introduced in 0.6.x: `get_or_generate` reads a
+  fresh empty per-instance dict on every traversal, so *no* uid scale URL
+  could ever resolve — the `plone.scale` annotation is never consulted.
+  Fixed on both ends: skip-types now emit the original field URL with a
+  modification-time cache buster (both plone.namedfile code paths, the
+  legacy `__init__` for 7.x and `_scale_url` for >= 8.0.0a2), the HiDPI
+  `srcset` attribute and the `srcset()` method emit Thumbor URLs, and
+  `get_or_generate` heals legacy uid URLs (cached HTML, stale
+  `image_scales` catalog metadata) by parsing the deterministic
+  `{fieldname}-{width}-{md5}` uid and regenerating the info on the fly —
+  restricted to widths registered in `plone.allowed_sizes`. Review
+  hardening on top: srcset() mirrors the parent's edge-case guards
+  (zero-size original, original-size back-fill, unresolvable src scale),
+  and the HiDPI srcset path threads crop info through for scale infos
+  that carry a scale name.
+  Closes [#17](https://github.com/bluedynamics/plone-pgthumbor/issues/17).
+
 - Add `cdk8s-plone` to the ecosystem navigation dropdown in the docs.
+
+- Chore: apply ruff 0.16 markdown code-fence formatting to four docs files
+  (pre-existing drift; the QA workflow runs the latest ruff via uvx over
+  the whole repo). Mark up `zope2.Public` as inline code in a security-doc
+  heading so vale's Microsoft.Spacing rule no longer trips on it.
 
 ## 0.6.4 (2026-04-20)
 

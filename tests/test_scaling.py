@@ -114,7 +114,8 @@ class TestThumborImageScale:
         assert f'src="{scale.url}"' in tag
 
     def test_svg_fallback(self, monkeypatch):
-        """SVG images should use standard Plone URLs, not Thumbor."""
+        """SVG images must use the original field URL — uid URLs never
+        resolve under the volatile ThumborScaleStorage (issue #17)."""
         from plone.pgthumbor.scaling import ThumborImageScale
 
         _setup_env(monkeypatch)
@@ -122,6 +123,8 @@ class TestThumborImageScale:
         ctx.absolute_url.return_value = "http://plone:8080/doc"
         request = MagicMock()
         data = _mock_image_data(content_type="image/svg+xml")
+        data.modified = None
+        ctx._p_mtime = None
 
         scale = ThumborImageScale(
             ctx,
@@ -134,9 +137,94 @@ class TestThumborImageScale:
             mimetype="image/svg+xml",
         )
 
-        # SVG should use standard Plone URL
         assert SERVER not in scale.url
-        assert "@@images" in scale.url
+        assert scale.url == "http://plone:8080/doc/@@images/image"
+        assert "abc123" not in scale.url
+
+    def test_svg_fallback_cache_buster_from_field_modified(self, monkeypatch):
+        """When the field carries a modification time, append ?v=<millis>."""
+        from plone.pgthumbor.scaling import ThumborImageScale
+
+        _setup_env(monkeypatch)
+        ctx = MagicMock()
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        data = _mock_image_data(content_type="image/svg+xml")
+        data.modified = 1700000000.0
+
+        scale = ThumborImageScale(
+            ctx,
+            MagicMock(),
+            data=data,
+            fieldname="image",
+            width=400,
+            height=300,
+            uid="image-400-abc123",
+            mimetype="image/svg+xml",
+        )
+
+        assert scale.url == "http://plone:8080/doc/@@images/image?v=1700000000000"
+
+    def test_svg_fallback_cache_buster_from_p_mtime(self, monkeypatch):
+        """Without field.modified, fall back to context._p_mtime."""
+        from plone.pgthumbor.scaling import ThumborImageScale
+
+        _setup_env(monkeypatch)
+        ctx = MagicMock()
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        ctx._p_mtime = 1600000000.0
+        data = _mock_image_data(content_type="image/svg+xml")
+        data.modified = None
+
+        scale = ThumborImageScale(
+            ctx,
+            MagicMock(),
+            data=data,
+            fieldname="image",
+            width=400,
+            height=300,
+            uid="image-400-abc123",
+            mimetype="image/svg+xml",
+        )
+
+        assert scale.url == "http://plone:8080/doc/@@images/image?v=1600000000000"
+
+    def test_svg_fallback_legacy_namedfile_path(self, monkeypatch):
+        """The legacy (<8.0.0a2) __init__ branch must also emit the field
+        URL — production runs plone.namedfile 7.x."""
+        from plone.pgthumbor.scaling import ThumborImageScale
+
+        import plone.pgthumbor.scaling as scaling_mod
+
+        _setup_env(monkeypatch)
+        monkeypatch.setattr(scaling_mod, "_HAS_SCALE_URL", False)
+
+        from plone.pgthumbor.scaling import _default_scale_url
+
+        monkeypatch.setattr(
+            ThumborImageScale,
+            "_scale_url",
+            lambda self, uid, ext, base_url=None, scale_info=None: _default_scale_url(
+                self.context, uid, ext, base_url
+            ),
+        )
+        ctx = MagicMock()
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        ctx._p_mtime = None
+        data = _mock_image_data(content_type="image/svg+xml")
+        data.modified = None
+
+        scale = ThumborImageScale(
+            ctx,
+            MagicMock(),
+            data=data,
+            fieldname="image",
+            width=400,
+            height=300,
+            uid="image-400-abc123",
+            mimetype="image/svg+xml",
+        )
+
+        assert scale.url == "http://plone:8080/doc/@@images/image"
 
     def test_not_configured_falls_back(self, monkeypatch):
         """When Thumbor not configured, use standard Plone URL."""
@@ -183,6 +271,109 @@ class TestThumborImageScale:
         # Original images served by Plone
         assert "@@images" in scale.url
         assert SERVER not in scale.url
+
+    def test_srcset_attribute_uses_thumbor_urls(self, monkeypatch):
+        """HiDPI srcset entries must be Thumbor URLs, not dead uid URLs."""
+        from plone.pgthumbor.scaling import ThumborImageScale
+
+        _setup_env(monkeypatch)
+        ctx = MagicMock()
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        data = _mock_image_data()
+
+        scale = ThumborImageScale(
+            ctx,
+            MagicMock(),
+            data=data,
+            fieldname="image",
+            width=400,
+            height=300,
+            uid="image-400-abc123",
+            mimetype="image/jpeg",
+            srcset=[
+                {"uid": "image-800-def456", "width": 800, "height": 600, "scale": 2},
+            ],
+        )
+
+        attr = scale.srcset_attribute()
+        assert attr.endswith(" 2x")
+        assert attr.startswith(SERVER)
+        assert "def456" not in attr
+
+    def test_srcset_attribute_empty_for_svg(self, monkeypatch):
+        """Vector images need no srcset — one URL fits all densities."""
+        from plone.pgthumbor.scaling import ThumborImageScale
+
+        _setup_env(monkeypatch)
+        ctx = MagicMock()
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        ctx._p_mtime = None
+        data = _mock_image_data(content_type="image/svg+xml")
+        data.modified = None
+
+        scale = ThumborImageScale(
+            ctx,
+            MagicMock(),
+            data=data,
+            fieldname="image",
+            width=400,
+            height=300,
+            uid="image-400-abc123",
+            mimetype="image/svg+xml",
+            srcset=[
+                {"uid": "image-800-def456", "width": 800, "height": 600, "scale": 2},
+            ],
+        )
+
+        assert scale.srcset_attribute() == ""
+
+    def test_srcset_attribute_drops_unresolvable_entries(self, monkeypatch):
+        """No Thumbor config → entries are dropped, never emitted as uid URLs."""
+        from plone.pgthumbor.scaling import ThumborImageScale
+
+        env_override(monkeypatch)
+        ctx = MagicMock()
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        data = _mock_image_data()
+
+        scale = ThumborImageScale(
+            ctx,
+            MagicMock(),
+            data=data,
+            fieldname="image",
+            width=400,
+            height=300,
+            uid="image-400-abc123",
+            mimetype="image/jpeg",
+            srcset=[
+                {"uid": "image-800-def456", "width": 800, "height": 600, "scale": 2},
+            ],
+        )
+
+        assert scale.srcset_attribute() == ""
+
+    def test_srcset_attribute_skips_entry_without_scale_factor(self, monkeypatch):
+        """A srcset entry lacking the 'scale' factor is skipped, not a KeyError."""
+        from plone.pgthumbor.scaling import ThumborImageScale
+
+        _setup_env(monkeypatch)
+        ctx = MagicMock()
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        data = _mock_image_data()
+
+        scale = ThumborImageScale(
+            ctx,
+            MagicMock(),
+            data=data,
+            fieldname="image",
+            width=400,
+            height=300,
+            uid="image-400-abc123",
+            mimetype="image/jpeg",
+            srcset=[{"uid": "image-800-def456", "width": 800, "height": 600}],
+        )
+
+        assert scale.srcset_attribute() == ""
 
 
 class TestThumborImageScaling:
@@ -636,6 +827,28 @@ class TestThumborImageScalingScaleUrl:
         result = scaling._scale_url("uid123", "jpeg")
         assert "@@images/uid123.jpeg" in result
 
+    def test_scale_url_svg_returns_field_url(self, monkeypatch):
+        """ThumborImageScaling._scale_url must not emit uid URLs for SVG."""
+        from plone.pgthumbor.scaling import ThumborImageScaling
+
+        _setup_env(monkeypatch)
+        ctx = MagicMock()
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        ctx._p_mtime = None
+        svg = _mock_image_data(content_type="image/svg+xml")
+        svg.modified = None
+        ctx.logo = svg
+        view = ThumborImageScaling(ctx, MagicMock())
+
+        uid = "logo-200-" + "a" * 32
+        url = view._scale_url(
+            uid,
+            "svg",
+            scale_info={"fieldname": "logo", "width": 200, "height": 200, "uid": uid},
+        )
+
+        assert url == "http://plone:8080/doc/@@images/logo"
+
 
 class TestGetCrop:
     """Test _get_crop() helper."""
@@ -824,3 +1037,106 @@ class TestCropInScaleUrl:
         )
         assert result.startswith(SERVER)
         assert "10x20:300x400" in result
+
+
+class TestThumborImageScalingSrcset:
+    """srcset() must never emit uid URLs (issue #17)."""
+
+    def _make_view(self, monkeypatch, content_type="image/jpeg"):
+        from plone.namedfile.scaling import ImageScaling
+        from plone.pgthumbor.scaling import ThumborImageScaling
+
+        _setup_env(monkeypatch)
+        ctx = MagicMock()
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        ctx.Title.return_value = "Doc"
+        ctx.image = _mock_image_data(content_type=content_type)
+        view = ThumborImageScaling(ctx, MagicMock())
+        monkeypatch.setattr(
+            ImageScaling,
+            "available_sizes",
+            {"preview": (400, 400), "large": (800, 800)},
+            raising=False,
+        )
+        view.getImageSize = lambda fieldname: (800, 600)
+        return view
+
+    def test_srcset_uses_scale_view_urls(self, monkeypatch):
+        """Each configured size must be requested — and rendered — via its
+        own scale view, not a single mocked return_value that would mask
+        per-size behavior."""
+        view = self._make_view(monkeypatch)
+        calls = []
+
+        def fake_scale(fieldname=None, width=None, height=None, scale=None, **kw):
+            calls.append(
+                {
+                    "fieldname": fieldname,
+                    "width": width,
+                    "height": height,
+                    "scale": scale,
+                }
+            )
+            fake = MagicMock()
+            resolved_width = width or {"preview": 400, "large": 800}.get(scale, 400)
+            fake.url = f"{SERVER}/signed/{resolved_width}x0/42/ff"
+            fake.width = resolved_width
+            fake.height = resolved_width * 3 // 4
+            return fake
+
+        view.scale = MagicMock(side_effect=fake_scale)
+
+        tag = view.srcset(fieldname="image", scale_in_src="preview")
+
+        assert SERVER in tag
+        assert "@@images/image-" not in tag
+        assert "400w" in tag
+        assert "800w" in tag
+        requested_widths = {c["width"] for c in calls if c["width"] is not None}
+        assert requested_widths == {400, 800}
+        assert any(c["scale"] == "preview" for c in calls)
+
+    def test_srcset_svg_delegates_to_tag(self, monkeypatch):
+        from plone.namedfile.scaling import _marker
+
+        view = self._make_view(monkeypatch, content_type="image/svg+xml")
+        view.tag = MagicMock(return_value="<img/>")
+
+        result = view.srcset(fieldname="image")
+
+        assert result == "<img/>"
+        view.tag.assert_called_once_with(
+            fieldname="image", alt=_marker, css_class=None, title=_marker
+        )
+
+    def test_srcset_unresolvable_src_scale_returns_none(self, monkeypatch):
+        """An unresolvable scale_in_src must not raise AttributeError on
+        ``None.url`` — mirrors the parent's ``if scale is None: return
+        None`` guard (issue #17 fix round 1, Finding 1)."""
+        view = self._make_view(monkeypatch)
+        view.scale = MagicMock(return_value=None)
+
+        assert view.srcset(fieldname="image", scale_in_src="nonexistent") is None
+
+    def test_srcset_undersized_original_backfills_original_entry(self, monkeypatch):
+        """An original smaller than every configured scale must still get a
+        non-empty srcset, back-filled with an original-size scale-view URL
+        (issue #17 fix round 1, Finding 2)."""
+        view = self._make_view(monkeypatch)
+        view.getImageSize = lambda fieldname: (100, 80)
+        calls = []
+
+        def fake_scale(fieldname=None, scale=None, height=None, width=None, **kw):
+            calls.append({"scale": scale, "width": width, "height": height})
+            fake = MagicMock()
+            fake.url = f"{SERVER}/signed/{width or scale}/42/ff"
+            fake.width = width or 100
+            fake.height = height or 80
+            return fake
+
+        view.scale = MagicMock(side_effect=fake_scale)
+
+        tag = view.srcset(fieldname="image", scale_in_src="preview")
+
+        assert "srcset=" in tag
+        assert f"{SERVER}/signed/100/42/ff 100w" in tag

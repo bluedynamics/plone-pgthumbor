@@ -21,7 +21,6 @@ from zope.interface import implementer
 
 @implementer(ICropProvider)
 class MyCropProvider:
-
     def __init__(self, context):
         self.context = context
 

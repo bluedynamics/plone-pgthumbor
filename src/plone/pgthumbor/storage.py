@@ -13,13 +13,37 @@ installed in this Plone site), it falls back to AnnotationStorage.
 from __future__ import annotations
 
 from plone.pgthumbor.interfaces import IPlonePgthumborLayer
+from plone.registry.interfaces import IRegistry
 from plone.scale.storage import AnnotationStorage
+from zope.component import queryUtility
 from zope.globalrequest import getRequest
 
 import logging
+import re
 
 
 logger = logging.getLogger(__name__)
+
+# plone.scale >= 4 deterministic uid: {fieldname}-{width}-{md5hex}
+_LEGACY_UID_RE = re.compile(
+    r"^(?P<fieldname>.+)-(?P<width>\d{1,9})-(?P<hash>[0-9a-f]{32})$"
+)
+
+
+def _allowed_scale_sizes():
+    """Map width -> (width, height) for all registered plone.allowed_sizes."""
+    registry = queryUtility(IRegistry)
+    if registry is None:
+        return {}
+    sizes = {}
+    for line in registry.get("plone.allowed_sizes") or ():
+        try:
+            _name, dims = line.split()
+            width, height = dims.split(":")
+            sizes.setdefault(int(width), (int(width), int(height)))
+        except ValueError:
+            continue
+    return sizes
 
 
 def thumbor_scale_storage_factory(context, modified=None):
@@ -67,12 +91,43 @@ class ThumborScaleStorage(AnnotationStorage):
         return self.pre_scale(**parameters)
 
     def get_or_generate(self, uid):
-        """Return stored info without generating image data.
+        """Return stored info, or heal a legacy uid without stored state.
 
-        Unlike the parent, never calls generate_scale() even if
-        data is None — in Thumbor mode, data is always None.
+        The volatile storage is empty on every fresh adapter instance, so
+        uid URLs from cached HTML or stale image_scales catalog metadata
+        would always 404 (issue #17).  The uid format is deterministic
+        and parseable — regenerate the info on the fly instead.
         """
-        return self.get(uid)
+        info = self.get(uid)
+        if info is not None:
+            return info
+        return self._heal_legacy_uid(uid)
+
+    def _heal_legacy_uid(self, uid):
+        """Rebuild scale info from a ``{fieldname}-{width}-{md5hex}`` uid.
+
+        Only widths registered in ``plone.allowed_sizes`` are accepted
+        (width 0 = original dimensions), so this cannot be abused to get
+        arbitrary dimensions signed on demand.  ``pre_scale`` itself
+        returns None for unknown fields or empty values.
+        """
+        match = _LEGACY_UID_RE.match(uid)
+        if match is None:
+            return None
+        fieldname = match.group("fieldname")
+        width = int(match.group("width"))
+        if width == 0:
+            dims = (None, None)
+        else:
+            dims = _allowed_scale_sizes().get(width)
+            if dims is None:
+                return None
+        info = self.pre_scale(
+            fieldname=fieldname, width=dims[0], height=dims[1], mode="scale"
+        )
+        if info is not None:
+            info.setdefault("fieldname", fieldname)
+        return info
 
     def generate_scale(self, uid=None, **parameters):
         """Override to prevent Pillow invocation.

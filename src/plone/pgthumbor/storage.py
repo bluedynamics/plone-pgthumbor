@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 # plone.scale >= 4 deterministic uid: {fieldname}-{width}-{md5hex}
 _LEGACY_UID_RE = re.compile(
-    r"^(?P<fieldname>.+)-(?P<width>\d+)-(?P<hash>[0-9a-f]{32})$"
+    r"^(?P<fieldname>.+)-(?P<width>\d{1,9})-(?P<hash>[0-9a-f]{32})$"
 )
 
 

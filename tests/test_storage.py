@@ -200,6 +200,65 @@ class TestThumborScaleStorage:
         ):
             assert storage.get_or_generate("gone-400-" + "e" * 32) is None
 
+    def test_get_or_generate_rejects_oversized_width(self):
+        """A multi-thousand-digit width must not raise — reject with None."""
+        storage = _make_storage()
+
+        with patch.object(storage, "pre_scale") as mock_pre:
+            assert (
+                storage.get_or_generate("image-" + "9" * 5000 + "-" + "a" * 32) is None
+            )
+
+        mock_pre.assert_not_called()
+
+
+class TestAllowedScaleSizes:
+    """Direct tests for the registry-parsing DoS gate."""
+
+    def _registry_with(self, lines):
+        registry = MagicMock()
+        registry.get.return_value = lines
+        return registry
+
+    def test_parses_registered_sizes(self):
+        from plone.pgthumbor.storage import _allowed_scale_sizes
+
+        registry = self._registry_with(["preview 400:400", "large 800:65536"])
+        with patch("plone.pgthumbor.storage.queryUtility", return_value=registry):
+            sizes = _allowed_scale_sizes()
+
+        assert sizes == {400: (400, 400), 800: (800, 65536)}
+        registry.get.assert_called_once_with("plone.allowed_sizes")
+
+    def test_first_width_wins_on_duplicates(self):
+        from plone.pgthumbor.storage import _allowed_scale_sizes
+
+        registry = self._registry_with(["a 400:400", "b 400:300"])
+        with patch("plone.pgthumbor.storage.queryUtility", return_value=registry):
+            assert _allowed_scale_sizes() == {400: (400, 400)}
+
+    def test_skips_malformed_lines(self):
+        from plone.pgthumbor.storage import _allowed_scale_sizes
+
+        registry = self._registry_with(
+            ["broken", "no-dims 400", "preview 400:400", "bad 400x300"]
+        )
+        with patch("plone.pgthumbor.storage.queryUtility", return_value=registry):
+            assert _allowed_scale_sizes() == {400: (400, 400)}
+
+    def test_no_registry_returns_empty(self):
+        from plone.pgthumbor.storage import _allowed_scale_sizes
+
+        with patch("plone.pgthumbor.storage.queryUtility", return_value=None):
+            assert _allowed_scale_sizes() == {}
+
+    def test_none_record_returns_empty(self):
+        from plone.pgthumbor.storage import _allowed_scale_sizes
+
+        registry = self._registry_with(None)
+        with patch("plone.pgthumbor.storage.queryUtility", return_value=registry):
+            assert _allowed_scale_sizes() == {}
+
 
 class TestThumborScaleStorageFactory:
     """Test that the factory respects the browser layer."""

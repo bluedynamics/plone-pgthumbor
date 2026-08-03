@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.5 (unreleased)
+## 0.6.5 (2026-08-04)
 
 - Fix: SVG (skip-Thumbor) images no longer emit uid-based scale URLs that
   permanently 404. Root cause was not `purge_scales` but the volatile

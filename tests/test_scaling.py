@@ -317,6 +317,54 @@ class TestThumborImageScale:
 
         assert scale.srcset_attribute() == ""
 
+    def test_srcset_attribute_drops_unresolvable_entries(self, monkeypatch):
+        """No Thumbor config → entries are dropped, never emitted as uid URLs."""
+        from plone.pgthumbor.scaling import ThumborImageScale
+
+        env_override(monkeypatch)
+        ctx = MagicMock()
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        data = _mock_image_data()
+
+        scale = ThumborImageScale(
+            ctx,
+            MagicMock(),
+            data=data,
+            fieldname="image",
+            width=400,
+            height=300,
+            uid="image-400-abc123",
+            mimetype="image/jpeg",
+            srcset=[
+                {"uid": "image-800-def456", "width": 800, "height": 600, "scale": 2},
+            ],
+        )
+
+        assert scale.srcset_attribute() == ""
+
+    def test_srcset_attribute_skips_entry_without_scale_factor(self, monkeypatch):
+        """A srcset entry lacking the 'scale' factor is skipped, not a KeyError."""
+        from plone.pgthumbor.scaling import ThumborImageScale
+
+        _setup_env(monkeypatch)
+        ctx = MagicMock()
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        data = _mock_image_data()
+
+        scale = ThumborImageScale(
+            ctx,
+            MagicMock(),
+            data=data,
+            fieldname="image",
+            width=400,
+            height=300,
+            uid="image-400-abc123",
+            mimetype="image/jpeg",
+            srcset=[{"uid": "image-800-def456", "width": 800, "height": 600}],
+        )
+
+        assert scale.srcset_attribute() == ""
+
 
 class TestThumborImageScaling:
     """Test ThumborImageScaling (@@images view override)."""

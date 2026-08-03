@@ -235,17 +235,23 @@ class ThumborImageScale(ImageScale):
             return ""
         if getattr(self.data, "contentType", "") in _SKIP_THUMBOR_TYPES:
             return ""
+        fieldname = getattr(self, "fieldname", None)
         parts = []
         for entry in self.srcset:
+            factor = entry.get("scale")
+            if not factor:
+                continue
+            crop = _get_crop(self.context, fieldname, entry)
             url = _build_thumbor_url(
                 self.context,
                 self.data,
                 entry.get("width", 0) or 0,
                 entry.get("height", 0) or 0,
-                "scale",
+                entry.get("mode", "scale"),
+                crop=crop,
             )
             if url:
-                parts.append(f"{url} {entry['scale']}x")
+                parts.append(f"{url} {factor}x")
         return ", ".join(parts)
 
     def index_html(self):

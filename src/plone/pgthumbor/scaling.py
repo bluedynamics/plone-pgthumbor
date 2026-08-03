@@ -225,6 +225,29 @@ class ThumborImageScale(ImageScale):
             return super()._scale_url(uid, extension, base_url, scale_info=scale_info)
         return _default_scale_url(self.context, uid, extension, base_url)
 
+    def srcset_attribute(self):
+        """HiDPI srcset with Thumbor URLs — uid URLs never resolve here.
+
+        Skip-types get no srcset (vector scales itself); entries where no
+        Thumbor URL can be built are dropped rather than emitted dead.
+        """
+        if not self.srcset:
+            return ""
+        if getattr(self.data, "contentType", "") in _SKIP_THUMBOR_TYPES:
+            return ""
+        parts = []
+        for entry in self.srcset:
+            url = _build_thumbor_url(
+                self.context,
+                self.data,
+                entry.get("width", 0) or 0,
+                entry.get("height", 0) or 0,
+                "scale",
+            )
+            if url:
+                parts.append(f"{url} {entry['scale']}x")
+        return ", ".join(parts)
+
     def index_html(self):
         """302 redirect to Thumbor URL instead of streaming ZODB data."""
         if self._thumbor_url:

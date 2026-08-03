@@ -262,6 +262,61 @@ class TestThumborImageScale:
         assert "@@images" in scale.url
         assert SERVER not in scale.url
 
+    def test_srcset_attribute_uses_thumbor_urls(self, monkeypatch):
+        """HiDPI srcset entries must be Thumbor URLs, not dead uid URLs."""
+        from plone.pgthumbor.scaling import ThumborImageScale
+
+        _setup_env(monkeypatch)
+        ctx = MagicMock()
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        data = _mock_image_data()
+
+        scale = ThumborImageScale(
+            ctx,
+            MagicMock(),
+            data=data,
+            fieldname="image",
+            width=400,
+            height=300,
+            uid="image-400-abc123",
+            mimetype="image/jpeg",
+            srcset=[
+                {"uid": "image-800-def456", "width": 800, "height": 600, "scale": 2},
+            ],
+        )
+
+        attr = scale.srcset_attribute()
+        assert attr.endswith(" 2x")
+        assert attr.startswith(SERVER)
+        assert "def456" not in attr
+
+    def test_srcset_attribute_empty_for_svg(self, monkeypatch):
+        """Vector images need no srcset — one URL fits all densities."""
+        from plone.pgthumbor.scaling import ThumborImageScale
+
+        _setup_env(monkeypatch)
+        ctx = MagicMock()
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        ctx._p_mtime = None
+        data = _mock_image_data(content_type="image/svg+xml")
+        data.modified = None
+
+        scale = ThumborImageScale(
+            ctx,
+            MagicMock(),
+            data=data,
+            fieldname="image",
+            width=400,
+            height=300,
+            uid="image-400-abc123",
+            mimetype="image/svg+xml",
+            srcset=[
+                {"uid": "image-800-def456", "width": 800, "height": 600, "scale": 2},
+            ],
+        )
+
+        assert scale.srcset_attribute() == ""
+
 
 class TestThumborImageScaling:
     """Test ThumborImageScaling (@@images view override)."""

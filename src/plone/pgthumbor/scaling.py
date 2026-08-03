@@ -331,8 +331,28 @@ class ThumborImageScaling(ImageScaling):
                 **kwargs,
             )
 
-        original_width, _original_height = self.getImageSize(fieldname)
+        original_width, original_height = self.getImageSize(fieldname)
+        if not original_width or not original_height:
+            return None
+
         srcset_urls = []
+
+        # Back-fill an original-size entry when no configured scale
+        # already covers it — mirrors the parent's guard so an
+        # undersized original still yields a non-empty srcset. The URL
+        # always comes from a scale view, never a bare uid string.
+        available_widths = [width for (width, _height) in self.available_sizes.values()]
+        if original_width not in available_widths:
+            scale_view = self.scale(
+                fieldname=fieldname,
+                width=original_width,
+                height=original_height,
+                pre=True,
+                include_srcset=False,
+            )
+            if scale_view is not None:
+                srcset_urls.append(f"{scale_view.url} {scale_view.width}w")
+
         for _name, (width, height) in self.available_sizes.items():
             if width <= original_width:
                 scale_view = self.scale(
@@ -367,6 +387,8 @@ class ThumborImageScaling(ImageScaling):
                     break
 
         scale_view = self.scale(fieldname=fieldname, scale=scale_in_src, pre=True)
+        if scale_view is None:
+            return None
         attributes["src"] = scale_view.url
         if "width" not in attributes:
             attributes["width"] = scale_view.width

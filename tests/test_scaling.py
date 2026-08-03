@@ -1052,24 +1052,81 @@ class TestThumborImageScalingSrcset:
         return view
 
     def test_srcset_uses_scale_view_urls(self, monkeypatch):
+        """Each configured size must be requested — and rendered — via its
+        own scale view, not a single mocked return_value that would mask
+        per-size behavior."""
         view = self._make_view(monkeypatch)
-        fake_scale = MagicMock()
-        fake_scale.url = f"{SERVER}/signed/400x0/42/ff"
-        fake_scale.width = 400
-        fake_scale.height = 300
-        view.scale = MagicMock(return_value=fake_scale)
+        calls = []
+
+        def fake_scale(fieldname=None, width=None, height=None, scale=None, **kw):
+            calls.append(
+                {
+                    "fieldname": fieldname,
+                    "width": width,
+                    "height": height,
+                    "scale": scale,
+                }
+            )
+            fake = MagicMock()
+            resolved_width = width or {"preview": 400, "large": 800}.get(scale, 400)
+            fake.url = f"{SERVER}/signed/{resolved_width}x0/42/ff"
+            fake.width = resolved_width
+            fake.height = resolved_width * 3 // 4
+            return fake
+
+        view.scale = MagicMock(side_effect=fake_scale)
 
         tag = view.srcset(fieldname="image", scale_in_src="preview")
 
         assert SERVER in tag
         assert "@@images/image-" not in tag
         assert "400w" in tag
+        assert "800w" in tag
+        requested_widths = {c["width"] for c in calls if c["width"] is not None}
+        assert requested_widths == {400, 800}
+        assert any(c["scale"] == "preview" for c in calls)
 
     def test_srcset_svg_delegates_to_tag(self, monkeypatch):
+        from plone.namedfile.scaling import _marker
+
         view = self._make_view(monkeypatch, content_type="image/svg+xml")
         view.tag = MagicMock(return_value="<img/>")
 
         result = view.srcset(fieldname="image")
 
         assert result == "<img/>"
-        view.tag.assert_called_once()
+        view.tag.assert_called_once_with(
+            fieldname="image", alt=_marker, css_class=None, title=_marker
+        )
+
+    def test_srcset_unresolvable_src_scale_returns_none(self, monkeypatch):
+        """An unresolvable scale_in_src must not raise AttributeError on
+        ``None.url`` — mirrors the parent's ``if scale is None: return
+        None`` guard (issue #17 fix round 1, Finding 1)."""
+        view = self._make_view(monkeypatch)
+        view.scale = MagicMock(return_value=None)
+
+        assert view.srcset(fieldname="image", scale_in_src="nonexistent") is None
+
+    def test_srcset_undersized_original_backfills_original_entry(self, monkeypatch):
+        """An original smaller than every configured scale must still get a
+        non-empty srcset, back-filled with an original-size scale-view URL
+        (issue #17 fix round 1, Finding 2)."""
+        view = self._make_view(monkeypatch)
+        view.getImageSize = lambda fieldname: (100, 80)
+        calls = []
+
+        def fake_scale(fieldname=None, scale=None, height=None, width=None, **kw):
+            calls.append({"scale": scale, "width": width, "height": height})
+            fake = MagicMock()
+            fake.url = f"{SERVER}/signed/{width or scale}/42/ff"
+            fake.width = width or 100
+            fake.height = height or 80
+            return fake
+
+        view.scale = MagicMock(side_effect=fake_scale)
+
+        tag = view.srcset(fieldname="image", scale_in_src="preview")
+
+        assert "srcset=" in tag
+        assert f"{SERVER}/signed/100/42/ff 100w" in tag

@@ -142,6 +142,27 @@ def _default_scale_url(context, uid, extension, base_url=None):
     return f"{base_url}/@@images/{uid}.{extension}"
 
 
+def _skip_type_fallback_url(context, data, fieldname, base_url=None):
+    """Original-field URL for types Thumbor cannot process (SVG).
+
+    Browsers scale vector images themselves; with the volatile
+    ThumborScaleStorage a uid-based scale URL can never resolve
+    (issue #17), so the field URL is the only stable target.  The
+    ``?v=`` modification-time cache buster compensates for the weaker
+    HTTP caching of non-unique URLs.
+    """
+    if base_url is None:
+        base_url = context.absolute_url()
+    url = f"{base_url}/@@images/{fieldname}"
+    modified = getattr(data, "modified", None)
+    if modified is None:
+        modified = getattr(context, "_p_mtime", None)
+    try:
+        return f"{url}?v={int(float(modified) * 1000)}"
+    except (TypeError, ValueError):
+        return url
+
+
 # True if installed plone.namedfile has _scale_url (>= 8.0.0a2)
 _HAS_SCALE_URL = hasattr(ImageScale, "_scale_url")
 
@@ -174,6 +195,10 @@ class ThumborImageScale(ImageScale):
             if url:
                 self._thumbor_url = url
                 self.url = url
+            elif getattr(self.data, "contentType", "") in _SKIP_THUMBOR_TYPES:
+                fieldname = info.get("fieldname") or getattr(self, "fieldname", None)
+                if fieldname:
+                    self.url = _skip_type_fallback_url(context, self.data, fieldname)
 
     def _scale_url(self, uid, extension, base_url=None, scale_info=None):
         """Generate Thumbor URL if possible, otherwise fall back to default."""
@@ -190,6 +215,12 @@ class ThumborImageScale(ImageScale):
             if url:
                 self._thumbor_url = url
                 return url
+        if scale_info and getattr(self.data, "contentType", "") in _SKIP_THUMBOR_TYPES:
+            fieldname = scale_info.get("fieldname") or getattr(self, "fieldname", None)
+            if fieldname:
+                return _skip_type_fallback_url(
+                    self.context, self.data, fieldname, base_url
+                )
         if _HAS_SCALE_URL:
             return super()._scale_url(uid, extension, base_url, scale_info=scale_info)
         return _default_scale_url(self.context, uid, extension, base_url)
@@ -223,6 +254,10 @@ class ThumborImageScaling(ImageScaling):
                 )
                 if url:
                     return url
+                if getattr(data, "contentType", "") in _SKIP_THUMBOR_TYPES:
+                    return _skip_type_fallback_url(
+                        self.context, data, scale_info["fieldname"], base_url
+                    )
         if _HAS_SCALE_URL:
             return super()._scale_url(uid, extension, base_url, scale_info=scale_info)
         return _default_scale_url(self.context, uid, extension, base_url)

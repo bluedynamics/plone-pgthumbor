@@ -114,7 +114,8 @@ class TestThumborImageScale:
         assert f'src="{scale.url}"' in tag
 
     def test_svg_fallback(self, monkeypatch):
-        """SVG images should use standard Plone URLs, not Thumbor."""
+        """SVG images must use the original field URL — uid URLs never
+        resolve under the volatile ThumborScaleStorage (issue #17)."""
         from plone.pgthumbor.scaling import ThumborImageScale
 
         _setup_env(monkeypatch)
@@ -122,6 +123,8 @@ class TestThumborImageScale:
         ctx.absolute_url.return_value = "http://plone:8080/doc"
         request = MagicMock()
         data = _mock_image_data(content_type="image/svg+xml")
+        data.modified = None
+        ctx._p_mtime = None
 
         scale = ThumborImageScale(
             ctx,
@@ -134,9 +137,84 @@ class TestThumborImageScale:
             mimetype="image/svg+xml",
         )
 
-        # SVG should use standard Plone URL
         assert SERVER not in scale.url
-        assert "@@images" in scale.url
+        assert scale.url == "http://plone:8080/doc/@@images/image"
+        assert "abc123" not in scale.url
+
+    def test_svg_fallback_cache_buster_from_field_modified(self, monkeypatch):
+        """When the field carries a modification time, append ?v=<millis>."""
+        from plone.pgthumbor.scaling import ThumborImageScale
+
+        _setup_env(monkeypatch)
+        ctx = MagicMock()
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        data = _mock_image_data(content_type="image/svg+xml")
+        data.modified = 1700000000.0
+
+        scale = ThumborImageScale(
+            ctx,
+            MagicMock(),
+            data=data,
+            fieldname="image",
+            width=400,
+            height=300,
+            uid="image-400-abc123",
+            mimetype="image/svg+xml",
+        )
+
+        assert scale.url == "http://plone:8080/doc/@@images/image?v=1700000000000"
+
+    def test_svg_fallback_cache_buster_from_p_mtime(self, monkeypatch):
+        """Without field.modified, fall back to context._p_mtime."""
+        from plone.pgthumbor.scaling import ThumborImageScale
+
+        _setup_env(monkeypatch)
+        ctx = MagicMock()
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        ctx._p_mtime = 1600000000.0
+        data = _mock_image_data(content_type="image/svg+xml")
+        data.modified = None
+
+        scale = ThumborImageScale(
+            ctx,
+            MagicMock(),
+            data=data,
+            fieldname="image",
+            width=400,
+            height=300,
+            uid="image-400-abc123",
+            mimetype="image/svg+xml",
+        )
+
+        assert scale.url == "http://plone:8080/doc/@@images/image?v=1600000000000"
+
+    def test_svg_fallback_legacy_namedfile_path(self, monkeypatch):
+        """The legacy (<8.0.0a2) __init__ branch must also emit the field
+        URL — production runs plone.namedfile 7.x."""
+        from plone.pgthumbor.scaling import ThumborImageScale
+
+        import plone.pgthumbor.scaling as scaling_mod
+
+        _setup_env(monkeypatch)
+        monkeypatch.setattr(scaling_mod, "_HAS_SCALE_URL", False)
+        ctx = MagicMock()
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        ctx._p_mtime = None
+        data = _mock_image_data(content_type="image/svg+xml")
+        data.modified = None
+
+        scale = ThumborImageScale(
+            ctx,
+            MagicMock(),
+            data=data,
+            fieldname="image",
+            width=400,
+            height=300,
+            uid="image-400-abc123",
+            mimetype="image/svg+xml",
+        )
+
+        assert scale.url == "http://plone:8080/doc/@@images/image"
 
     def test_not_configured_falls_back(self, monkeypatch):
         """When Thumbor not configured, use standard Plone URL."""
@@ -635,6 +713,28 @@ class TestThumborImageScalingScaleUrl:
         scaling = ThumborImageScaling(ctx, request)
         result = scaling._scale_url("uid123", "jpeg")
         assert "@@images/uid123.jpeg" in result
+
+    def test_scale_url_svg_returns_field_url(self, monkeypatch):
+        """ThumborImageScaling._scale_url must not emit uid URLs for SVG."""
+        from plone.pgthumbor.scaling import ThumborImageScaling
+
+        _setup_env(monkeypatch)
+        ctx = MagicMock()
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        ctx._p_mtime = None
+        svg = _mock_image_data(content_type="image/svg+xml")
+        svg.modified = None
+        ctx.logo = svg
+        view = ThumborImageScaling(ctx, MagicMock())
+
+        uid = "logo-200-" + "a" * 32
+        url = view._scale_url(
+            uid,
+            "svg",
+            scale_info={"fieldname": "logo", "width": 200, "height": 200, "uid": uid},
+        )
+
+        assert url == "http://plone:8080/doc/@@images/logo"
 
 
 class TestGetCrop:

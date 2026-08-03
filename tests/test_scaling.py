@@ -1027,3 +1027,49 @@ class TestCropInScaleUrl:
         )
         assert result.startswith(SERVER)
         assert "10x20:300x400" in result
+
+
+class TestThumborImageScalingSrcset:
+    """srcset() must never emit uid URLs (issue #17)."""
+
+    def _make_view(self, monkeypatch, content_type="image/jpeg"):
+        from plone.namedfile.scaling import ImageScaling
+        from plone.pgthumbor.scaling import ThumborImageScaling
+
+        _setup_env(monkeypatch)
+        ctx = MagicMock()
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        ctx.Title.return_value = "Doc"
+        ctx.image = _mock_image_data(content_type=content_type)
+        view = ThumborImageScaling(ctx, MagicMock())
+        monkeypatch.setattr(
+            ImageScaling,
+            "available_sizes",
+            {"preview": (400, 400), "large": (800, 800)},
+            raising=False,
+        )
+        view.getImageSize = lambda fieldname: (800, 600)
+        return view
+
+    def test_srcset_uses_scale_view_urls(self, monkeypatch):
+        view = self._make_view(monkeypatch)
+        fake_scale = MagicMock()
+        fake_scale.url = f"{SERVER}/signed/400x0/42/ff"
+        fake_scale.width = 400
+        fake_scale.height = 300
+        view.scale = MagicMock(return_value=fake_scale)
+
+        tag = view.srcset(fieldname="image", scale_in_src="preview")
+
+        assert SERVER in tag
+        assert "@@images/image-" not in tag
+        assert "400w" in tag
+
+    def test_srcset_svg_delegates_to_tag(self, monkeypatch):
+        view = self._make_view(monkeypatch, content_type="image/svg+xml")
+        view.tag = MagicMock(return_value="<img/>")
+
+        result = view.srcset(fieldname="image")
+
+        assert result == "<img/>"
+        view.tag.assert_called_once()

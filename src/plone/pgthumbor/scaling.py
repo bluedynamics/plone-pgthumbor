@@ -7,6 +7,8 @@ Thumbor URLs instead of ZODB-stored scaled images.
 from __future__ import annotations
 
 from AccessControl.PermissionRole import rolesForPermissionOn
+from plone.namedfile.scaling import _image_tag_from_values
+from plone.namedfile.scaling import _marker
 from plone.namedfile.scaling import ImageScale
 from plone.namedfile.scaling import ImageScaling
 from plone.pgthumbor.blob import get_blob_ids
@@ -14,6 +16,7 @@ from plone.pgthumbor.config import get_thumbor_config
 from plone.pgthumbor.interfaces import ICropProvider
 from plone.pgthumbor.url import scale_mode_to_thumbor
 from plone.pgthumbor.url import thumbor_url
+from plone.rfc822.interfaces import IPrimaryFieldInfo
 from ZODB.utils import u64
 from zope.component import queryAdapter
 
@@ -290,3 +293,84 @@ class ThumborImageScaling(ImageScaling):
         if _HAS_SCALE_URL:
             return super()._scale_url(uid, extension, base_url, scale_info=scale_info)
         return _default_scale_url(self.context, uid, extension, base_url)
+
+    def srcset(
+        self,
+        fieldname=None,
+        scale_in_src="huge",
+        sizes="",
+        alt=_marker,
+        css_class=None,
+        title=_marker,
+        **kwargs,
+    ):
+        """Reimplementation of plone.namedfile's srcset().
+
+        The parent builds ``@@images/{uid}`` URLs straight from
+        ``storage.pre_scale`` — dead under the volatile storage
+        (issue #17).  Build every URL from a scale view instead, whose
+        ``.url`` is a Thumbor URL (raster) or field URL (skip-types).
+        """
+        if fieldname is None:
+            try:
+                primary = IPrimaryFieldInfo(self.context, None)
+            except TypeError:
+                return
+            if primary is None:
+                return
+            fieldname = primary.fieldname
+
+        data = getattr(self.context, fieldname, None)
+        if getattr(data, "contentType", "") in _SKIP_THUMBOR_TYPES:
+            # Vector: one URL fits all widths — plain img tag suffices.
+            return self.tag(
+                fieldname=fieldname,
+                alt=alt,
+                css_class=css_class,
+                title=title,
+                **kwargs,
+            )
+
+        original_width, _original_height = self.getImageSize(fieldname)
+        srcset_urls = []
+        for _name, (width, height) in self.available_sizes.items():
+            if width <= original_width:
+                scale_view = self.scale(
+                    fieldname=fieldname,
+                    width=width,
+                    height=height,
+                    pre=True,
+                    include_srcset=False,
+                )
+                if scale_view is not None:
+                    srcset_urls.append(f"{scale_view.url} {scale_view.width}w")
+
+        attributes = {}
+        if title is _marker:
+            attributes["title"] = self.context.Title()
+        elif title:
+            attributes["title"] = title
+        if alt is _marker:
+            attributes["alt"] = self.context.Title()
+        else:
+            attributes["alt"] = alt
+        if css_class is not None:
+            attributes["class"] = css_class
+        attributes.update(**kwargs)
+        attributes["sizes"] = sizes
+        attributes["srcset"] = ", ".join(srcset_urls)
+
+        if scale_in_src not in self.available_sizes:
+            for key, (width, _height) in self.available_sizes.items():
+                if width <= original_width:
+                    scale_in_src = key
+                    break
+
+        scale_view = self.scale(fieldname=fieldname, scale=scale_in_src, pre=True)
+        attributes["src"] = scale_view.url
+        if "width" not in attributes:
+            attributes["width"] = scale_view.width
+        if "height" not in attributes:
+            attributes["height"] = scale_view.height
+
+        return _image_tag_from_values(*attributes.items())

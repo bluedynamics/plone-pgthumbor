@@ -2,7 +2,8 @@
 
 ## 0.6.6 (unreleased)
 
-- Nothing changed yet.
+- Add `cloud-vinyl` and `plone.observability` to the ecosystem navigation
+  dropdown in the docs.
 
 ## 0.6.5 (2026-08-04)
 

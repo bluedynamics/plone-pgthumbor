@@ -4,6 +4,15 @@ from __future__ import annotations
 
 from libthumbor import CryptoURL
 
+import importlib.metadata
+import packaging.version
+
+
+try:
+    PLONE_SCALE_VERSION = importlib.metadata.version("plone.scale")
+except importlib.metadata.PackageNotFoundError:
+    PLONE_SCALE_VERSION = None
+
 
 def thumbor_url(
     server_url: str,
@@ -75,6 +84,19 @@ def scale_mode_to_thumbor(mode: str, smart_cropping: bool = False) -> dict:
     Returns:
         Dict with "fit_in" and "smart" keys.
     """
+
+    # NOTE: `plone.scale` has a scale mode semantics bug where its mode names
+    # are opposite to the corresponding CSS `object-fit` property names.
+    # We expect that to be fixed in version 6.
+    # See: https://github.com/plone/plone.scale/issues/78
+    if PLONE_SCALE_VERSION and packaging.version.Version(
+        PLONE_SCALE_VERSION
+    ) < packaging.version.Version("6"):
+        if mode == "cover":
+            mode = "contain"
+        elif mode == "contain":
+            mode = "cover"
+
     if mode == "cover":
         return {"fit_in": False, "smart": smart_cropping}
     if mode == "contain":

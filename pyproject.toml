@@ -114,3 +114,11 @@ order-by-type = false
 [tool.ruff.lint.pycodestyle]
 max-line-length = 120
 max-doc-length = 120
+
+[tool.uv]
+# Make uv check git tags instead of pyproject
+# mtime.
+cache-keys = [
+  { file = "pyproject.toml" },
+  { git = { commit = true, tags = true } },
+]

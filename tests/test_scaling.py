@@ -925,6 +925,27 @@ class TestGetCrop:
         )
         assert result is None
 
+    def test_srcset_density_factor_is_not_read_as_a_scale_name(self, monkeypatch):
+        """A srcset entry's dict-level "scale" is the HiDPI density factor
+        (plone.namedfile's calculate_srcset does
+        ``scale_src["scale"] = hdScale["scale"]`` and never forwards a scale
+        name into it), not a scale name. The key carries no "scale" at all
+        for such entries, so the crop lookup must not fall back to reading
+        the density factor as one — it must yield no crop rather than call
+        the provider with an integer."""
+        from plone.pgthumbor import scaling as scaling_mod
+
+        provider = MagicMock()
+        monkeypatch.setattr(scaling_mod, "queryAdapter", lambda ctx, iface: provider)
+
+        result = scaling_mod._get_crop(
+            MagicMock(),
+            "image",
+            {"key": (("fieldname", "image"), ("width", 800)), "scale": 2},
+        )
+        assert result is None
+        provider.get_crop.assert_not_called()
+
 
 class TestBuildThumborUrlWithCrop:
     """Test _build_thumbor_url() crop behavior."""
@@ -1179,7 +1200,7 @@ class TestScaleParam:
     def test_default_when_absent_everywhere(self):
         from plone.pgthumbor.scaling import _scale_param
 
-        assert _scale_param({"key": self._key(width=400)}, "mode", "scale") == ("scale")
+        assert _scale_param({"key": self._key(width=400)}, "mode", "scale") == "scale"
 
     def test_none_info_returns_the_default(self):
         from plone.pgthumbor.scaling import _scale_param
@@ -1260,3 +1281,72 @@ class TestModeReachesTheUrl:
         canonical = self._url(monkeypatch, key_mode="contain")
 
         assert alias == canonical
+
+
+class TestModeReachesTheUrlOnTheLegacyPath:
+    """Same regression as TestModeReachesTheUrl, forced onto the legacy
+    (<8.0.0a2) ``__init__`` branch of ``ThumborImageScale`` — the
+    ``if not _HAS_SCALE_URL`` block in ``scaling.py``.
+
+    This repo has no lockfile, and this dev venv resolves plone.namedfile
+    8.x, where ``_HAS_SCALE_URL`` is True: ``ImageScale.__init__`` already
+    calls ``self._scale_url(...)``, so TestModeReachesTheUrl only ever
+    exercises that 8.x call site. Production runs plone.namedfile 7.x,
+    where ``_scale_url`` does not exist on the parent at all and the legacy
+    ``__init__`` block is the *only* call site that runs. Without a test
+    that forces this branch, the mode fix has zero executed coverage on the
+    path production actually uses. (Follows the pattern already used by
+    test_svg_fallback_legacy_namedfile_path above.)
+    """
+
+    def _url(self, monkeypatch, key_mode=_MISSING, info_mode=_MISSING):
+        from plone.pgthumbor.scaling import ThumborImageScale
+
+        import plone.pgthumbor.scaling as scaling_mod
+
+        _setup_env(monkeypatch)
+        monkeypatch.setattr(scaling_mod, "_HAS_SCALE_URL", False)
+        # Stub out the override so the 8.x call site (already covered by
+        # TestModeReachesTheUrl) cannot itself supply the URL — only the
+        # manual legacy-path block in __init__ may do so here.
+        monkeypatch.setattr(
+            ThumborImageScale,
+            "_scale_url",
+            lambda self, uid, ext, base_url=None, scale_info=None: None,
+        )
+        ctx = MagicMock()
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        info = {
+            "data": _mock_image_data(),
+            "fieldname": "image",
+            "width": 400,
+            "height": 200,
+            "uid": "image-400-abc123",
+            "mimetype": "image/jpeg",
+        }
+        if key_mode is not _MISSING:
+            info["key"] = tuple(
+                sorted(
+                    {
+                        "fieldname": "image",
+                        "width": 400,
+                        "height": 200,
+                        "mode": key_mode,
+                    }.items()
+                )
+            )
+        if info_mode is not _MISSING:
+            info["mode"] = info_mode
+        return ThumborImageScale(ctx, MagicMock(), **info).url
+
+    def test_mode_in_the_key_changes_the_url(self, monkeypatch):
+        contain = self._url(monkeypatch, key_mode="contain")
+        plain = self._url(monkeypatch, key_mode="scale")
+
+        assert contain != plain
+
+    def test_key_mode_agrees_with_an_explicit_mode(self, monkeypatch):
+        for mode in ("scale", "cover", "contain"):
+            from_key = self._url(monkeypatch, key_mode=mode)
+            explicit = self._url(monkeypatch, info_mode=mode)
+            assert from_key == explicit, mode

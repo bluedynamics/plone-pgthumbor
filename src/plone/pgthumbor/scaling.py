@@ -32,7 +32,7 @@ _SKIP_THUMBOR_TYPES = {"image/svg+xml"}
 _UNSET = object()
 
 
-def _scale_param(scale_info, name, default=None):
+def _scale_param(scale_info, name, default=None, key_only=False):
     """Read a call parameter back out of a plone.scale info dict.
 
     ``pre_scale`` keeps the parameters in ``info["key"]`` and copies only a few
@@ -45,6 +45,12 @@ def _scale_param(scale_info, name, default=None):
     holds the raw value ``hash_key`` hashed.  plone/plone.scale#156 will add
     ``mode`` to the dict as well, and reading the key first keeps this correct
     either way.
+
+    ``key_only`` skips that dict fallback entirely.  It exists because
+    ``scale_info["scale"]`` does not mean the same thing everywhere: on a
+    srcset entry (``plone.namedfile``'s ``calculate_srcset``) it is the
+    integer HiDPI density factor, not a scale name, so a scale-name lookup
+    must never fall back to it.
     """
     if not scale_info:
         return default
@@ -57,7 +63,14 @@ def _scale_param(scale_info, name, default=None):
         value = parameters.get(name, _UNSET)
         if value is not _UNSET:
             return value
+    if key_only:
+        return default
     return scale_info.get(name, default)
+
+
+def _scale_mode(scale_info):
+    """The normalised scale mode for a plone.scale info dict or srcset entry."""
+    return get_scale_mode(_scale_param(scale_info, "mode", "scale"))
 
 
 def _needs_auth_url(
@@ -150,7 +163,7 @@ def _get_crop(context, fieldname, scale_info):
     if provider is None:
         return None
 
-    scale_name = _scale_param(scale_info, "scale")
+    scale_name = _scale_param(scale_info, "scale", key_only=True)
     if not fieldname or not scale_name:
         return None
 
@@ -217,7 +230,7 @@ class ThumborImageScale(ImageScale):
                 self.data,
                 info.get("width", 0) or 0,
                 info.get("height", 0) or 0,
-                get_scale_mode(_scale_param(info, "mode", "scale")),
+                _scale_mode(info),
                 crop=crop,
             )
             if url:
@@ -237,7 +250,7 @@ class ThumborImageScale(ImageScale):
                 self.data,
                 scale_info.get("width", 0) or 0,
                 scale_info.get("height", 0) or 0,
-                get_scale_mode(_scale_param(scale_info, "mode", "scale")),
+                _scale_mode(scale_info),
                 crop=crop,
             )
             if url:
@@ -275,7 +288,7 @@ class ThumborImageScale(ImageScale):
                 self.data,
                 entry.get("width", 0) or 0,
                 entry.get("height", 0) or 0,
-                get_scale_mode(_scale_param(entry, "mode", "scale")),
+                _scale_mode(entry),
                 crop=crop,
             )
             if url:
@@ -306,7 +319,7 @@ class ThumborImageScaling(ImageScaling):
                     data,
                     scale_info.get("width", 0) or 0,
                     scale_info.get("height", 0) or 0,
-                    get_scale_mode(_scale_param(scale_info, "mode", "scale")),
+                    _scale_mode(scale_info),
                     crop=crop,
                 )
                 if url:

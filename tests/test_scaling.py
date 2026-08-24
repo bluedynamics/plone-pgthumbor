@@ -1473,11 +1473,12 @@ class TestModeReachesTheUrlInScalingScaleUrl:
         assert contain != plain
 
 
-def _mock_derivative(oid_int=0x99, serial_int=0xAA):
+def _mock_derivative(oid_int=0x99, serial_int=0xAA, size=(800, 600)):
     """A stand-in for the NamedBlobImage stored as _pgthumbor_source."""
     derivative = MagicMock()
     derivative.contentType = "image/jpeg"
     derivative._blob = _mock_blob(oid_int, serial_int)
+    derivative.getImageSize.return_value = size
     return derivative
 
 
@@ -1646,3 +1647,252 @@ class TestSourceSelection:
         )
 
         assert "/99/aa" in url
+
+
+class TestRescaleCrop:
+    """Mapping a crop box from original pixels into derivative pixels.
+
+    plone.app.imagecropping stores boxes in the original's coordinates and
+    passes them through untouched.  Against a 4000 px derivative of an
+    11811 px original an unscaled box cuts into empty space.
+    """
+
+    def test_both_axes_get_their_own_factor(self):
+        from plone.pgthumbor.scaling import _rescale_crop
+
+        # Deliberately non-proportional so a single shared factor cannot
+        # produce this answer: x halves, y quarters.
+        box = _rescale_crop(((1000, 1000), (2000, 2000)), (8000, 4000), (4000, 1000))
+
+        assert box == ((500, 250), (1000, 500))
+
+    def test_rounding_is_direction_aware(self):
+        from plone.pgthumbor.scaling import _rescale_crop
+
+        # Floor the near edges, ceil the far ones, so the mapped region
+        # covers the original selection rather than cutting into it.
+        # 1000 * 4000 / 11811 = 338.67 -> 338; 2000 * ... = 677.34 -> 678.
+        box = _rescale_crop(((1000, 1000), (2000, 2000)), (11811, 8858), (4000, 2999))
+
+        assert box == ((338, 338), (678, 678))
+
+    def test_the_box_is_clamped_to_the_derivative(self):
+        from plone.pgthumbor.scaling import _rescale_crop
+
+        box = _rescale_crop(((-50, -50), (9000, 9000)), (8000, 6000), (4000, 3000))
+
+        assert box == ((0, 0), (4000, 3000))
+
+    def test_a_box_outside_the_image_degenerates_to_none(self):
+        from plone.pgthumbor.scaling import _rescale_crop
+
+        # A crop left over from a larger image that has since been
+        # replaced: everything clamps to the right edge and the region
+        # collapses.
+        assert (
+            _rescale_crop(((9000, 9000), (9500, 9500)), (8000, 6000), (4000, 3000))
+            is None
+        )
+
+    def test_a_zero_area_box_degenerates_to_none(self):
+        from plone.pgthumbor.scaling import _rescale_crop
+
+        assert (
+            _rescale_crop(((100, 100), (100, 100)), (8000, 6000), (4000, 3000)) is None
+        )
+
+    def test_an_unknown_original_size_drops_the_crop(self):
+        from plone.pgthumbor.scaling import _rescale_crop
+
+        # Better no crop than a box in the wrong coordinate system.
+        assert _rescale_crop(((10, 10), (20, 20)), None, (4000, 3000)) is None
+        assert _rescale_crop(((10, 10), (20, 20)), (0, 0), (4000, 3000)) is None
+
+
+class TestCropTranslationInTheUrl:
+    """The translation as it reaches libthumbor's plaintext box."""
+
+    def _url(self, monkeypatch, data, crop, mode="cover", width=400, height=300):
+        from plone.pgthumbor import scaling as scaling_mod
+
+        _setup_env(monkeypatch)
+        monkeypatch.setattr(
+            scaling_mod, "_needs_auth_url", lambda ctx, zoid, paranoid_mode=False: False
+        )
+        ctx = MagicMock()
+        ctx._p_oid = struct.pack(">Q", 0x42)
+        return scaling_mod._build_thumbor_url(ctx, data, width, height, mode, crop=crop)
+
+    def test_the_box_is_rescaled_to_the_derivative(self, monkeypatch):
+        data = _mock_image_data(
+            width=8000, height=6000, derivative=_mock_derivative(size=(4000, 3000))
+        )
+
+        url = self._url(monkeypatch, data, ((1000, 2000), (3000, 4000)))
+
+        assert "500x1000:1500x2000" in url
+
+    def test_the_box_is_untouched_without_a_derivative(self, monkeypatch):
+        # Gated on "a derivative was selected", never on "a crop exists".
+        # A skipped or failed derivative carrying a crop must pass the box
+        # through unchanged.
+        data = _mock_image_data(width=8000, height=6000)
+
+        url = self._url(monkeypatch, data, ((1000, 2000), (3000, 4000)))
+
+        assert "1000x2000:3000x4000" in url
+
+    def test_a_degenerate_box_is_dropped_and_the_mode_default_restored(
+        self, monkeypatch
+    ):
+        from plone.pgthumbor.url import scale_mode_to_thumbor
+
+        data = _mock_image_data(
+            width=8000, height=6000, derivative=_mock_derivative(size=(4000, 3000))
+        )
+
+        url = self._url(monkeypatch, data, ((9000, 9000), (9500, 9500)), mode="cover")
+
+        # libthumbor silently ignores an all-zero box, which would render a
+        # full uncropped image under crop semantics rather than erroring.
+        assert ":" not in url.rsplit("/", 3)[-3]
+        # The mode's own values come back.  Derived, not written as a
+        # literal: PR #23's cover/contain swap for plone.scale < 6 and the
+        # #21 mode fix both moved what "the default" means.
+        expected = scale_mode_to_thumbor("cover", smart_cropping=False)
+        assert ("fit-in" in url) is expected["fit_in"]
+        assert ("/smart/" in url) is expected["smart"]
+
+    def test_the_translation_reaches_scale_url(self, monkeypatch):
+        from plone.pgthumbor import scaling as scaling_mod
+        from plone.pgthumbor.scaling import ThumborImageScaling
+
+        _setup_env(monkeypatch)
+        monkeypatch.setattr(
+            scaling_mod, "_needs_auth_url", lambda ctx, zoid, paranoid_mode=False: False
+        )
+        monkeypatch.setattr(
+            scaling_mod,
+            "_get_crop",
+            lambda ctx, fieldname, info: ((1000, 2000), (3000, 4000)),
+        )
+        ctx = MagicMock()
+        ctx._p_oid = struct.pack(">Q", 0x42)
+        ctx.image = _mock_image_data(
+            width=8000, height=6000, derivative=_mock_derivative(size=(4000, 3000))
+        )
+        view = ThumborImageScaling(ctx, MagicMock())
+
+        url = view._scale_url(
+            "image-400-abc",
+            "jpeg",
+            scale_info={"fieldname": "image", "width": 400, "height": 300},
+        )
+
+        assert "500x1000:1500x2000" in url
+
+
+class TestDimensionClamping:
+    """No URL ever asks for more pixels than the selected source holds."""
+
+    def _url(self, monkeypatch, data, width, height):
+        from plone.pgthumbor import scaling as scaling_mod
+
+        _setup_env(monkeypatch)
+        monkeypatch.setattr(
+            scaling_mod, "_needs_auth_url", lambda ctx, zoid, paranoid_mode=False: False
+        )
+        ctx = MagicMock()
+        ctx._p_oid = struct.pack(">Q", 0x42)
+        return scaling_mod._build_thumbor_url(ctx, data, width, height, "scale")
+
+    def test_a_request_above_the_derivative_is_clamped(self, monkeypatch):
+        """Thumbor's MAX_PIXELS guards the source, not the output.
+
+        Asking an 11811 px rendition of a 4000 px derivative would succeed
+        by upscaling, allocating hundreds of megabytes in a pod limited to
+        1536Mi and handing browsers a multi-megabyte candidate.
+        """
+        data = _mock_image_data(
+            width=11811, height=8858, derivative=_mock_derivative(size=(4000, 2999))
+        )
+
+        url = self._url(monkeypatch, data, 11811, 8858)
+
+        assert "/4000x2999/" in url
+
+    def test_a_request_below_the_derivative_is_left_alone(self, monkeypatch):
+        data = _mock_image_data(
+            width=11811, height=8858, derivative=_mock_derivative(size=(4000, 2999))
+        )
+
+        url = self._url(monkeypatch, data, 400, 300)
+
+        assert "/400x300/" in url
+
+    def test_zero_means_auto_and_is_not_clamped(self, monkeypatch):
+        data = _mock_image_data(
+            width=11811, height=8858, derivative=_mock_derivative(size=(4000, 2999))
+        )
+
+        url = self._url(monkeypatch, data, 400, 0)
+
+        assert "/400x0/" in url
+
+    def test_the_original_is_clamped_too_when_no_derivative_exists(self, monkeypatch):
+        data = _mock_image_data(width=800, height=600)
+
+        url = self._url(monkeypatch, data, 4000, 3000)
+
+        assert "/800x600/" in url
+
+
+class TestImageSize:
+    """A field value that cannot state its size must drop the crop.
+
+    Better no crop than a box interpreted in the wrong coordinate system,
+    which is what an unscaled original box against a derivative would be.
+    """
+
+    def test_reads_a_normal_size(self):
+        from plone.pgthumbor.scaling import _image_size
+
+        assert _image_size(_mock_image_data(width=800, height=600)) == (800, 600)
+
+    def test_a_raising_field_value_is_unknowable(self):
+        from plone.pgthumbor.scaling import _image_size
+
+        image = MagicMock()
+        image.getImageSize.side_effect = ValueError("corrupt header")
+
+        assert _image_size(image) is None
+
+    def test_a_missing_method_is_unknowable(self):
+        from plone.pgthumbor.scaling import _image_size
+
+        assert _image_size(object()) is None
+
+    def test_a_zero_dimension_is_unknowable(self):
+        from plone.pgthumbor.scaling import _image_size
+
+        # plone.namedfile reports (0, 0) for an image it could not sniff.
+        assert _image_size(_mock_image_data(width=0, height=0)) is None
+
+    def test_an_unknowable_original_drops_the_crop_in_the_url(self, monkeypatch):
+        from plone.pgthumbor import scaling as scaling_mod
+
+        _setup_env(monkeypatch)
+        monkeypatch.setattr(
+            scaling_mod, "_needs_auth_url", lambda ctx, zoid, paranoid_mode=False: False
+        )
+        ctx = MagicMock()
+        ctx._p_oid = struct.pack(">Q", 0x42)
+        data = _mock_image_data(
+            width=0, height=0, derivative=_mock_derivative(size=(4000, 3000))
+        )
+
+        url = scaling_mod._build_thumbor_url(
+            ctx, data, 400, 300, "cover", crop=((10, 10), (20, 20))
+        )
+
+        assert "10x10:20x20" not in url

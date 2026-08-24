@@ -22,6 +22,7 @@ from ZODB.utils import u64
 from zope.component import queryAdapter
 
 import logging
+import math
 
 
 logger = logging.getLogger(__name__)
@@ -102,6 +103,63 @@ def _needs_auth_url(
         return True  # fail safe → use auth URL
 
 
+def _image_size(image):
+    """``(width, height)`` for a field value, or None when unknowable."""
+    try:
+        size = image.getImageSize()
+        width, height = int(size[0]), int(size[1])
+    except Exception:
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return width, height
+
+
+def _rescale_crop(crop, original_size, source_size):
+    """Map a crop box from original pixels into *source_size* pixels.
+
+    ``plone.app.imagecropping`` stores boxes in the original's coordinates
+    and ``_get_crop`` passes them through untouched, so against a 4000 px
+    derivative of an 11811 px original an unscaled box cuts into empty
+    space.
+
+    The box arrives nested as ``((left, top), (right, bottom))``, so it
+    cannot be mapped element-wise.  Each axis gets its own factor, taken
+    from the derivative's *actual* size rather than from the cap — height
+    rounding means 4000x2999, not 4000x3000, and one shared factor drifts
+    past the bottom edge.
+
+    Rounding is direction-aware: floor the near edges and ceil the far
+    ones, so the mapped region covers the original selection instead of
+    cutting into the subject.  Then clamp to the derivative's bounds.
+
+    Returns None when the result is unusable — an unknown original size, or
+    a region that collapsed to zero width or height.  None means "no crop",
+    which the caller has to honour *before* it forces crop semantics on.
+    """
+    if not original_size or not source_size:
+        return None
+    original_width, original_height = original_size
+    source_width, source_height = source_size
+    if original_width <= 0 or original_height <= 0:
+        return None
+
+    (left, top), (right, bottom) = crop
+    factor_x = source_width / original_width
+    factor_y = source_height / original_height
+
+    left = max(0, math.floor(left * factor_x))
+    top = max(0, math.floor(top * factor_y))
+    right = min(source_width, math.ceil(right * factor_x))
+    bottom = min(source_height, math.ceil(bottom * factor_y))
+
+    if right <= left or bottom <= top:
+        # libthumbor silently ignores an all-zero box, which would render a
+        # full uncropped image under crop semantics rather than erroring.
+        return None
+    return ((left, top), (right, bottom))
+
+
 def _build_thumbor_url(context, data, width, height, mode, crop=None):
     """Build a Thumbor URL for the given image data and dimensions.
 
@@ -163,10 +221,31 @@ def _build_thumbor_url(context, data, width, height, mode, crop=None):
         if _needs_auth_url(context, content_zoid_int, cfg.paranoid_mode):
             content_zoid = content_zoid_int
 
+    source_size = _image_size(source)
+
+    # Never request more pixels than the selected source holds.  Thumbor's
+    # MAX_PIXELS guards the *source*, not the output, so an 11811 px
+    # rendition of a 4000 px derivative would succeed by upscaling —
+    # hundreds of megabytes in a pod limited to 1536Mi, and a
+    # multi-megabyte srcset candidate for the browser.  A zero means
+    # "auto" and is left alone.
+    if source_size:
+        width = min(width, source_size[0]) if width else width
+        height = min(height, source_size[1]) if height else height
+
+    # Translate the crop before anything acts on it.  Gated on "a
+    # derivative was actually selected", never on "a crop exists": a
+    # skipped or failed derivative carrying a crop must pass the box
+    # through untouched.
+    if crop is not None and source is not data:
+        crop = _rescale_crop(crop, _image_size(data), source_size)
+
     thumbor_params = scale_mode_to_thumbor(mode, smart_cropping=cfg.smart_cropping)
     if crop is not None:
         # Explicit crop overrides smart detection — let Thumbor crop
-        # the specified region and then fit the result.
+        # the specified region and then fit the result.  This has to come
+        # *after* the translation above: a crop dropped as degenerate must
+        # not leave the scale rendering under crop semantics without a crop.
         thumbor_params["fit_in"] = True
         thumbor_params["smart"] = False
 

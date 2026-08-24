@@ -192,18 +192,20 @@ class TestScaleModeToThumbor:
         params = scale_mode_to_thumbor("scale", smart_cropping=False)
         assert params == {"fit_in": True, "smart": False}
 
-    def test_cover_mode(self):
-        """Cover mode: no fit_in, smart crop."""
-        from plone.pgthumbor.url import scale_mode_to_thumbor
+    def test_cover_mode(self, monkeypatch):
+        """Cover mode: no fit_in, smart crop (plone.scale >= 6, correct semantics)."""
+        from plone.pgthumbor import url as url_mod
 
-        params = scale_mode_to_thumbor("cover", smart_cropping=True)
+        monkeypatch.setattr(url_mod, "PLONE_SCALE_VERSION", "6.0.0")
+        params = url_mod.scale_mode_to_thumbor("cover", smart_cropping=True)
         assert params == {"fit_in": False, "smart": True}
 
-    def test_contain_mode(self):
-        """Contain mode: fit_in, no smart."""
-        from plone.pgthumbor.url import scale_mode_to_thumbor
+    def test_contain_mode(self, monkeypatch):
+        """Contain mode: fit_in, no smart (plone.scale >= 6, correct semantics)."""
+        from plone.pgthumbor import url as url_mod
 
-        params = scale_mode_to_thumbor("contain", smart_cropping=True)
+        monkeypatch.setattr(url_mod, "PLONE_SCALE_VERSION", "6.0.0")
+        params = url_mod.scale_mode_to_thumbor("contain", smart_cropping=True)
         assert params == {"fit_in": True, "smart": False}
 
     def test_unknown_mode_defaults_to_scale(self):
@@ -211,6 +213,53 @@ class TestScaleModeToThumbor:
 
         params = scale_mode_to_thumbor("unknown", smart_cropping=True)
         assert params == {"fit_in": True, "smart": True}
+
+
+class TestScaleModeToThumborLegacyPloneScale:
+    """Test the plone.scale < 6 cover/contain semantics-bug compatibility shim.
+
+    See: https://github.com/plone/plone.scale/issues/78
+    """
+
+    def test_cover_mode_swapped_below_version_6(self, monkeypatch):
+        """With plone.scale < 6 installed, 'cover' is treated as 'contain'."""
+        from plone.pgthumbor import url as url_mod
+
+        monkeypatch.setattr(url_mod, "PLONE_SCALE_VERSION", "5.0.0")
+        params = url_mod.scale_mode_to_thumbor("cover", smart_cropping=True)
+        assert params == {"fit_in": True, "smart": False}
+
+    def test_contain_mode_swapped_below_version_6(self, monkeypatch):
+        """With plone.scale < 6 installed, 'contain' is treated as 'cover'."""
+        from plone.pgthumbor import url as url_mod
+
+        monkeypatch.setattr(url_mod, "PLONE_SCALE_VERSION", "5.0.0")
+        params = url_mod.scale_mode_to_thumbor("contain", smart_cropping=True)
+        assert params == {"fit_in": False, "smart": True}
+
+    def test_scale_mode_unaffected_below_version_6(self, monkeypatch):
+        """The default 'scale' mode is not part of the semantics bug."""
+        from plone.pgthumbor import url as url_mod
+
+        monkeypatch.setattr(url_mod, "PLONE_SCALE_VERSION", "5.0.0")
+        params = url_mod.scale_mode_to_thumbor("scale", smart_cropping=True)
+        assert params == {"fit_in": True, "smart": True}
+
+    def test_no_swap_at_version_6(self, monkeypatch):
+        """Version 6.0.0 itself already has the fix, so no swap occurs."""
+        from plone.pgthumbor import url as url_mod
+
+        monkeypatch.setattr(url_mod, "PLONE_SCALE_VERSION", "6.0.0")
+        params = url_mod.scale_mode_to_thumbor("cover", smart_cropping=True)
+        assert params == {"fit_in": False, "smart": True}
+
+    def test_no_swap_when_plone_scale_not_installed(self, monkeypatch):
+        """When plone.scale isn't installed, no swap is applied."""
+        from plone.pgthumbor import url as url_mod
+
+        monkeypatch.setattr(url_mod, "PLONE_SCALE_VERSION", None)
+        params = url_mod.scale_mode_to_thumbor("cover", smart_cropping=True)
+        assert params == {"fit_in": False, "smart": True}
 
 
 class TestThumborUrlContentZoid:

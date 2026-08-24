@@ -2,6 +2,11 @@
 
 ## 0.6.6 (unreleased)
 
+- Support the `scale` mode semantics bug from plone.scale < version 6.
+  The scale mode names are opposite to the corresponding CSS `object-fit`
+  property names. We expect that to be fixed in version 6.
+  [thet]
+
 - Add `cloud-vinyl` and `plone.observability` to the ecosystem navigation
   dropdown in the docs.
 

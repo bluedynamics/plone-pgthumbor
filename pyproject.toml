@@ -26,6 +26,7 @@ dependencies = [
     "libthumbor>=2.0",
     "Pillow>=10",
     "plone.app.registry",
+    "plone.dexterity",
     "plone.namedfile",
     "plone.pgcatalog",
     "plone.rest",

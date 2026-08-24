@@ -356,6 +356,22 @@ REASON_ERROR = "error"
 
 TERMINAL_REASONS = frozenset({REASON_GENERATED, REASON_NOT_NEEDED, REASON_SKIPPED_TYPE})
 
+# The attribute names, spelled once.  The subscriber and the backfill both
+# need them — the backfill reaches them as JSONB keys in SQL — and three
+# independent spellings of one string is three places to drift.
+SOURCE_ATTRIBUTE = "_pgthumbor_source"
+INFO_ATTRIBUTE = "_pgthumbor_source_info"
+
+# Set on the derivative itself, never on an original.  A derivative is a
+# NamedBlobImage like any other, so it lands in object_state as its own row
+# and would otherwise be indistinguishable from a candidate: the backfill
+# would decode it, find it needs nothing, and stamp an outcome record onto
+# it — and phase 2 would have no content object to reindex for it.  A
+# marker says so exactly.  Matching on the filename instead would silently
+# skip an editorial upload that happened to be named that way, and silent
+# is the failure mode this design spends its effort avoiding.
+IS_DERIVATIVE_ATTRIBUTE = "_pgthumbor_is_source"
+
 
 def _derivative_filename(named_image, extension: str) -> str:
     """A recognisable filename, so a stray blob can be traced back here."""
@@ -364,8 +380,14 @@ def _derivative_filename(named_image, extension: str) -> str:
     return f"{stem}-pgthumbor-source.{extension}"
 
 
-def _should_process(named_image, max_edge: int, force: bool) -> bool:
-    """Whether *named_image* still needs examining at this cap."""
+def needs_processing(named_image, max_edge: int, force: bool = False) -> bool:
+    """Whether *named_image* still needs examining at this cap.
+
+    Public because three consumers have to agree on it: this module, the
+    subscriber — which asks before taking the decode semaphore, so an
+    already-settled image never queues behind an unrelated decode — and the
+    backfill's candidate SQL, which mirrors the same rule in JSONB.
+    """
     if force:
         return True
     info = getattr(named_image, "_pgthumbor_source_info", None)
@@ -426,7 +448,7 @@ def set_source_derivative(
     if max_edge <= 0:
         return False
 
-    if not _should_process(named_image, max_edge, force):
+    if not needs_processing(named_image, max_edge, force):
         return False
 
     if getattr(named_image, "contentType", "") in _SKIP_CONTENT_TYPES:
@@ -457,14 +479,13 @@ def set_source_derivative(
         return False
 
     payload, content_type, extension = built
-    _record(
-        named_image,
-        NamedBlobImage(
-            data=payload,
-            filename=_derivative_filename(named_image, extension),
-            contentType=content_type,
-        ),
-        REASON_GENERATED,
-        max_edge,
+    derivative = NamedBlobImage(
+        data=payload,
+        filename=_derivative_filename(named_image, extension),
+        contentType=content_type,
     )
+    # Mark it, so the backfill tells a derivative from a candidate by
+    # structure rather than by guessing at its filename.
+    setattr(derivative, IS_DERIVATIVE_ATTRIBUTE, True)
+    _record(named_image, derivative, REASON_GENERATED, max_edge)
     return True

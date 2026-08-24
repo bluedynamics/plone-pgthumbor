@@ -78,6 +78,24 @@
       file="imagecropping.zcml"
       />
 
+  <!-- Thumbor source derivatives, generated on add and on modify.
+       Registered for IDexterityContent and never for "*": this package
+       declares a z3c.autoinclude plugin, so its ZCML is loaded for the
+       whole instance and an unqualified registration would fire in every
+       site in the process, including ones that never installed the add-on.
+       IObjectAddedEvent also fires on rename, move, paste and content
+       import; the handler is idempotent, which is what makes those free. -->
+  <subscriber
+      for="plone.dexterity.interfaces.IDexterityContent
+           zope.lifecycleevent.interfaces.IObjectAddedEvent"
+      handler=".subscribers.generate_source_derivatives"
+      />
+  <subscriber
+      for="plone.dexterity.interfaces.IDexterityContent
+           zope.lifecycleevent.interfaces.IObjectModifiedEvent"
+      handler=".subscribers.generate_source_derivatives"
+      />
+
   <!-- Upgrade steps -->
   <genericsetup:upgradeStep
       title="Remove dead registry keys (server_url, security_key, unsafe)"

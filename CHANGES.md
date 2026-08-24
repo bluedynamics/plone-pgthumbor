@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.6 (unreleased)
+## 0.7.0 (2026-08-24)
 
 - Add Thumbor source derivatives. Thumbor refuses images above its `MAX_PIXELS`
   limit (75 MP by default) and answers HTTP 400 after several seconds of work, so

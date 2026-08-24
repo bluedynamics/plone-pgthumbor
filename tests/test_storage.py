@@ -101,66 +101,157 @@ class TestThumborScaleStorage:
         s1.storage["key"] = "value"
         assert "key" not in s2.storage
 
-    def test_get_or_generate_heals_legacy_uid(self):
-        """A uid-shaped miss regenerates scale info via pre_scale (issue #17):
-        cached HTML and stale image_scales metadata keep working."""
+
+class TestMintTime:
+    """The modification time a uid was hashed against."""
+
+    def test_uses_the_field_value_modification_time(self):
         storage = _make_storage()
-        healed = {
-            "uid": "image-400-" + "a" * 32,
-            "data": None,
-            "width": 400,
-            "height": 400,
-        }
+        storage.context._p_mtime = 1700000000.0
+        storage.context.image.modified = 1755000000.0
+
+        assert storage._mint_time("image") == 1755000000000
+
+    def test_falls_back_to_the_context_mtime(self):
+        from plone.pgthumbor.storage import ThumborScaleStorage
+
+        ctx = MagicMock(spec=["_p_mtime"])
+        ctx._p_mtime = 1700000000.0
+        storage = ThumborScaleStorage(ctx, modified=None)
+
+        assert storage._mint_time("image") == 1700000000000
+
+
+class TestHealByHashMatch:
+    """Mint a uid, then heal it: the recovered parameters must be identical.
+
+    This is the whole point of the fix. A storage built the way traversal
+    builds it (modified=None) cannot reproduce a mint-time hash, so every
+    test here also proves the mint time was reconstructed.
+    """
+
+    MINT_TIME = 1755000000000
+
+    def _storages(self):
+        """Return (minting storage, healing storage) over the same context."""
+        from plone.pgthumbor.storage import ThumborScaleStorage
+
+        ctx = MagicMock()
+        minting = ThumborScaleStorage(ctx, modified=lambda: self.MINT_TIME)
+        healing = ThumborScaleStorage(ctx, modified=None)
+        return minting, healing
+
+    def _heal(self, healing, uid, scales, original_size=None):
+        """Run the healing path with the mint time and registry stubbed out."""
+        recorded = {}
+
+        def fake_pre_scale(**parameters):
+            recorded.update(parameters)
+            return {"uid": uid, "data": None}
 
         with (
-            patch.object(storage, "pre_scale", return_value=dict(healed)) as mock_pre,
-            patch(
-                "plone.pgthumbor.storage._allowed_scale_sizes",
-                return_value={400: (400, 400)},
-            ),
+            patch.object(healing, "pre_scale", side_effect=fake_pre_scale),
+            patch.object(healing, "_mint_time", return_value=self.MINT_TIME),
+            patch.object(healing, "_original_size", return_value=original_size),
+            patch("plone.pgthumbor.storage.registered_scales", return_value=scales),
         ):
-            result = storage.get_or_generate("image-400-" + "b" * 32)
+            result = healing.get_or_generate(uid)
+        return result, recorded
 
-        mock_pre.assert_called_once_with(
-            fieldname="image", width=400, height=400, mode="scale"
+    def test_recovers_cover_mode(self):
+        """Issue #21 defect 1: mode was hardcoded to "scale"."""
+        minting, healing = self._storages()
+        uid = minting.hash_key(
+            fieldname="image", width=400, height=200, mode="cover", scale=None
         )
-        assert result["fieldname"] == "image"
 
-    def test_get_or_generate_heals_fieldname_with_dashes(self):
-        """fieldname may contain dashes — parse from the right."""
-        storage = _make_storage()
+        result, recorded = self._heal(healing, uid, (("Haeuser", 400, 200),))
 
-        with (
-            patch.object(storage, "pre_scale", return_value={"uid": "x"}) as mock_pre,
-            patch(
-                "plone.pgthumbor.storage._allowed_scale_sizes",
-                return_value={200: (200, 200)},
-            ),
-        ):
-            storage.get_or_generate("my-logo-field-200-" + "c" * 32)
+        assert result is not None
+        assert recorded["mode"] == "cover"
+        assert (recorded["width"], recorded["height"]) == (400, 200)
 
-        mock_pre.assert_called_once_with(
-            fieldname="my-logo-field", width=200, height=200, mode="scale"
+    def test_disambiguates_two_scales_sharing_a_width(self):
+        """Issue #21 defect 2: Haeuser 400:200 healed as preview 400:0."""
+        minting, healing = self._storages()
+        uid = minting.hash_key(
+            fieldname="image", width=400, height=200, mode="scale", scale=None
         )
 
-    def test_get_or_generate_rejects_unregistered_width(self):
-        """Unknown widths 404 — prevents on-demand signing of arbitrary
-        dimensions (cache-filling amplification)."""
-        storage = _make_storage()
+        _result, recorded = self._heal(
+            healing, uid, (("preview", 400, 0), ("Haeuser", 400, 200))
+        )
 
-        with (
-            patch.object(storage, "pre_scale") as mock_pre,
-            patch(
-                "plone.pgthumbor.storage._allowed_scale_sizes",
-                return_value={400: (400, 400)},
-            ),
-        ):
-            assert storage.get_or_generate("image-999-" + "b" * 32) is None
+        assert (recorded["width"], recorded["height"]) == (400, 200)
 
-        mock_pre.assert_not_called()
+    def test_recovers_a_height_driven_scale(self):
+        """Issue #21 defect 3: Header 0:460 healed to the original size."""
+        minting, healing = self._storages()
+        uid = minting.hash_key(
+            fieldname="image", width=0, height=460, mode="scale", scale="Header"
+        )
 
-    def test_get_or_generate_rejects_malformed_uid(self):
-        """Hash part must look like md5-hex; anything else stays a 404."""
+        _result, recorded = self._heal(healing, uid, (("Header", 0, 460),))
+
+        assert (recorded["width"], recorded["height"]) == (0, 460)
+        assert recorded["scale"] == "Header"
+
+    def test_recovers_the_explicit_dimensions_shape_of_a_zero_height_scale(self):
+        """The image_scales indexer passes scale=None, not the name."""
+        minting, healing = self._storages()
+        uid = minting.hash_key(
+            fieldname="image", width=400, height=0, mode="scale", scale=None
+        )
+
+        _result, recorded = self._heal(healing, uid, (("preview", 400, 0),))
+
+        assert recorded["scale"] is None
+
+    def test_recovers_the_no_scale_key_shape(self):
+        """plone.namedfile's own srcset() passes no scale key at all."""
+        minting, healing = self._storages()
+        uid = minting.hash_key(fieldname="image", width=400, height=0, mode="scale")
+
+        _result, recorded = self._heal(healing, uid, (("preview", 400, 0),))
+
+        assert "scale" not in recorded
+
+    def test_recovers_the_original_size_download_entry(self):
+        minting, healing = self._storages()
+        uid = minting.hash_key(
+            fieldname="image", width=900, height=600, mode="scale", scale=None
+        )
+
+        _result, recorded = self._heal(healing, uid, (), original_size=(900, 600))
+
+        assert (recorded["width"], recorded["height"]) == (900, 600)
+
+    def test_fieldname_with_dashes_round_trips(self):
+        minting, healing = self._storages()
+        uid = minting.hash_key(
+            fieldname="my-logo-field",
+            width=400,
+            height=200,
+            mode="scale",
+            scale=None,
+        )
+
+        _result, recorded = self._heal(healing, uid, (("Haeuser", 400, 200),))
+
+        assert recorded["fieldname"] == "my-logo-field"
+
+    def test_unregistered_width_stays_a_404(self):
+        """The #17 gate: arbitrary dimensions must not be signed on demand."""
+        _minting, healing = self._storages()
+
+        result, recorded = self._heal(
+            healing, "image-999-" + "b" * 32, (("Haeuser", 400, 200),)
+        )
+
+        assert result is None
+        assert recorded == {}
+
+    def test_malformed_uid_stays_a_404(self):
         storage = _make_storage()
 
         with patch.object(storage, "pre_scale") as mock_pre:
@@ -169,39 +260,7 @@ class TestThumborScaleStorage:
 
         mock_pre.assert_not_called()
 
-    def test_get_or_generate_width_zero_means_original(self):
-        """uid 'image-0-<hash>' comes from bare tag()/pre_scale without a
-        width — regenerate with original dimensions."""
-        storage = _make_storage()
-
-        with (
-            patch.object(storage, "pre_scale", return_value={"uid": "x"}) as mock_pre,
-            patch(
-                "plone.pgthumbor.storage._allowed_scale_sizes",
-                return_value={},
-            ),
-        ):
-            storage.get_or_generate("image-0-" + "d" * 32)
-
-        mock_pre.assert_called_once_with(
-            fieldname="image", width=None, height=None, mode="scale"
-        )
-
-    def test_get_or_generate_pre_scale_none_returns_none(self):
-        """pre_scale returning None (missing field/value) stays a 404."""
-        storage = _make_storage()
-
-        with (
-            patch.object(storage, "pre_scale", return_value=None),
-            patch(
-                "plone.pgthumbor.storage._allowed_scale_sizes",
-                return_value={400: (400, 400)},
-            ),
-        ):
-            assert storage.get_or_generate("gone-400-" + "e" * 32) is None
-
-    def test_get_or_generate_rejects_oversized_width(self):
-        """A multi-thousand-digit width must not raise — reject with None."""
+    def test_oversized_width_stays_a_404(self):
         storage = _make_storage()
 
         with patch.object(storage, "pre_scale") as mock_pre:
@@ -211,53 +270,22 @@ class TestThumborScaleStorage:
 
         mock_pre.assert_not_called()
 
-
-class TestAllowedScaleSizes:
-    """Direct tests for the registry-parsing DoS gate."""
-
-    def _registry_with(self, lines):
-        registry = MagicMock()
-        registry.get.return_value = lines
-        return registry
-
-    def test_parses_registered_sizes(self):
-        from plone.pgthumbor.storage import _allowed_scale_sizes
-
-        registry = self._registry_with(["preview 400:400", "large 800:65536"])
-        with patch("plone.pgthumbor.storage.queryUtility", return_value=registry):
-            sizes = _allowed_scale_sizes()
-
-        assert sizes == {400: (400, 400), 800: (800, 65536)}
-        registry.get.assert_called_once_with("plone.allowed_sizes")
-
-    def test_first_width_wins_on_duplicates(self):
-        from plone.pgthumbor.storage import _allowed_scale_sizes
-
-        registry = self._registry_with(["a 400:400", "b 400:300"])
-        with patch("plone.pgthumbor.storage.queryUtility", return_value=registry):
-            assert _allowed_scale_sizes() == {400: (400, 400)}
-
-    def test_skips_malformed_lines(self):
-        from plone.pgthumbor.storage import _allowed_scale_sizes
-
-        registry = self._registry_with(
-            ["broken", "no-dims 400", "preview 400:400", "bad 400x300"]
+    def test_pre_scale_returning_none_stays_a_404(self):
+        minting, healing = self._storages()
+        uid = minting.hash_key(
+            fieldname="image", width=400, height=200, mode="scale", scale=None
         )
-        with patch("plone.pgthumbor.storage.queryUtility", return_value=registry):
-            assert _allowed_scale_sizes() == {400: (400, 400)}
 
-    def test_no_registry_returns_empty(self):
-        from plone.pgthumbor.storage import _allowed_scale_sizes
-
-        with patch("plone.pgthumbor.storage.queryUtility", return_value=None):
-            assert _allowed_scale_sizes() == {}
-
-    def test_none_record_returns_empty(self):
-        from plone.pgthumbor.storage import _allowed_scale_sizes
-
-        registry = self._registry_with(None)
-        with patch("plone.pgthumbor.storage.queryUtility", return_value=registry):
-            assert _allowed_scale_sizes() == {}
+        with (
+            patch.object(healing, "pre_scale", return_value=None),
+            patch.object(healing, "_mint_time", return_value=self.MINT_TIME),
+            patch.object(healing, "_original_size", return_value=None),
+            patch(
+                "plone.pgthumbor.storage.registered_scales",
+                return_value=(("Haeuser", 400, 200),),
+            ),
+        ):
+            assert healing.get_or_generate(uid) is None
 
 
 class TestThumborScaleStorageFactory:

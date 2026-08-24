@@ -2,6 +2,11 @@
 
 ## 0.6.6 (unreleased)
 
+- Add the `LICENSE` file with the full GNU General Public License v2.0 text.
+  The packaging metadata already declared `GPL-2.0-only`, but the license text
+  itself was missing from the repository, so GitHub reported "No license" and
+  the terms could not be verified from the source tree alone. Fixes #24.
+  
 - Support the `scale` mode semantics bug from plone.scale < version 6.
   The scale mode names are opposite to the corresponding CSS `object-fit`
   property names. We expect that to be fixed in version 6.

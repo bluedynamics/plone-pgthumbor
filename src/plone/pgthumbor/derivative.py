@@ -20,6 +20,11 @@ import logging
 import warnings
 
 
+try:
+    from PIL import ImageCms
+except ImportError:  # pragma: no cover - littlecms is optional in some builds
+    ImageCms = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -168,3 +173,138 @@ def _open_and_draft(source, max_edge: int) -> Image.Image:
     # present, rather than as a decoder side effect.
     image.draft(None, _draft_target(image.size, max_edge))
     return image
+
+
+# Quality 92 at 4:4:4.  The derivative is an intermediate that Thumbor
+# scales again, and chroma subsampling applied twice produces visible
+# colour fringing on edges.
+_JPEG_QUALITY = 92
+
+_ALPHA_MODES = frozenset({"RGBA", "LA", "La", "PA"})
+
+
+def _has_alpha(image: Image.Image) -> bool:
+    """True when the image carries transparency the encoder must preserve."""
+    return image.mode in _ALPHA_MODES or "transparency" in image.info
+
+
+def _to_srgb(image: Image.Image) -> Image.Image:
+    """Normalise *image* to a clean sRGB raster, keeping alpha if present.
+
+    Goes through the embedded ICC profile when there is one, because a
+    plain ``convert("RGB")`` on CMYK applies a naive formula that shifts
+    press colours noticeably.  Falls back to ``convert`` when there is no
+    profile, when littlecms is missing from the Pillow build, or when the
+    profile turns out to be unusable — a broken profile is not a reason to
+    lose the derivative.
+    """
+    target = "RGBA" if _has_alpha(image) else "RGB"
+    profile = image.info.get("icc_profile")
+    if image.mode == target and not profile:
+        return image
+    if profile and ImageCms is not None:
+        try:
+            return ImageCms.profileToProfile(
+                image,
+                ImageCms.ImageCmsProfile(io.BytesIO(profile)),
+                ImageCms.createProfile("sRGB"),
+                outputMode=target,
+            )
+        except Exception:
+            logger.warning(
+                "ICC conversion failed, falling back to a plain convert",
+                exc_info=True,
+            )
+    return image.convert(target)
+
+
+def _log_if_larger(encoded: bytes, source_length: int | None) -> None:
+    """Note a derivative that costs more bytes than the original it fronts.
+
+    It is kept regardless.  Byte size and pixel count are independent: a
+    well-compressed 11811 px original can be smaller than its own 4000 px
+    derivative while still being the 104 MP image Thumbor refuses to
+    process.  Dropping the derivative on byte size would reintroduce the
+    exact HTTP 400 this package exists to remove, so the size is a
+    reporting concern, not a decision.
+    """
+    if source_length is None or len(encoded) <= source_length:
+        return
+    logger.warning(
+        "Thumbor source derivative is larger than its original "
+        "(%d > %d bytes) — keeping it, because the pixel reduction is what "
+        "Thumbor's MAX_PIXELS limit cares about",
+        len(encoded),
+        source_length,
+    )
+
+
+def _source_length(source) -> int | None:
+    """Byte length of *source*, without consuming a file object."""
+    if isinstance(source, (bytes, bytearray, memoryview)):
+        return len(source)
+    try:
+        position = source.tell()
+        source.seek(0, io.SEEK_END)
+        length = source.tell()
+        source.seek(position)
+        return length
+    except Exception:
+        return None
+
+
+def _encode(image: Image.Image) -> tuple[bytes, str, str]:
+    """Encode to JPEG, or PNG when transparency has to survive."""
+    buffer = io.BytesIO()
+    if _has_alpha(image):
+        image.save(buffer, "PNG", optimize=True)
+        return buffer.getvalue(), "image/png", "png"
+    # No exif= argument, so EXIF and IPTC are dropped — matching Thumbor's
+    # own PRESERVE_EXIF_INFO = False default.  Orientation is deliberately
+    # not applied; see the design's "Deliberately excluded".
+    image.save(buffer, "JPEG", quality=_JPEG_QUALITY, subsampling=0)
+    return buffer.getvalue(), "image/jpeg", "jpeg"
+
+
+def build_derivative_bytes(source, max_edge: int):
+    """Build a capped, sRGB-normalised derivative from image bytes.
+
+    Accepts raw bytes or a seekable file object.  Returns
+    ``(bytes, content_type, extension)``, or ``None`` when no derivative is
+    needed or none could be produced.
+
+    **Never raises.**  Derivative generation must not be able to fail an
+    upload, so every outcome is a return value and the caller falls back to
+    the original untouched.
+    """
+    if max_edge <= 0:
+        # 0 is the documented kill switch; short-circuit before any decode.
+        return None
+
+    source_length = _source_length(source)
+    try:
+        image = _open_and_draft(source, max_edge)
+        if _is_excluded_image(image):
+            return None
+        if not _needs_derivative(image, max_edge):
+            return None
+
+        # Colour before geometry.  Resampling a palette image in palette
+        # space interpolates palette *indices* and produces garbage, so P
+        # has to become RGB or RGBA before thumbnail() touches it.
+        image = _to_srgb(image)
+
+        # thumbnail(), not ImageOps.contain: contain upscales to fill the
+        # box, which would enlarge a small CMYK image that triggered on
+        # colour space alone.  thumbnail never enlarges.
+        image.thumbnail((max_edge, max_edge), Image.Resampling.LANCZOS)
+
+        encoded, content_type, extension = _encode(image)
+        _log_if_larger(encoded, source_length)
+        return encoded, content_type, extension
+    except Exception:
+        logger.warning(
+            "Could not build a Thumbor source derivative; using the original",
+            exc_info=True,
+        )
+        return None

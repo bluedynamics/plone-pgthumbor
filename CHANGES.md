@@ -67,6 +67,10 @@
   `plone.scale < 6` gate, and until the fix above it was only ever reached
   with `"scale"`, so the other two branches were unobservable.
 
+- Tests: cover the mode-threading fix on the two call sites that had none:
+  `srcset_attribute`, whose argument is a `calculate_srcset` entry rather
+  than a full info dict, and `ThumborImageScaling._scale_url`.
+
 - Docs: fix the "Scale modes" tables in `README.md`,
   `docs/sources/explanation/why-thumbor.md`, and
   `docs/sources/reference/url-format.md`, which described the inverse of

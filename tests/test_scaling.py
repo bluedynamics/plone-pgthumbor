@@ -1350,3 +1350,112 @@ class TestModeReachesTheUrlOnTheLegacyPath:
             from_key = self._url(monkeypatch, key_mode=mode)
             explicit = self._url(monkeypatch, info_mode=mode)
             assert from_key == explicit, mode
+
+
+class TestModeReachesTheUrlInSrcsetAttribute:
+    """Same regression as TestModeReachesTheUrl, on srcset_attribute's own
+    call site (scaling.py:291).
+
+    Its argument is a ``calculate_srcset`` entry, not a full info dict --
+    that shape difference is exactly what the bug commit 7faa284 had to fix
+    for ``_get_crop`` (a srcset entry's top-level ``"scale"`` is the HiDPI
+    density factor, not a scale name), so this call site needs its own
+    coverage rather than borrowing TestModeReachesTheUrl's.
+    """
+
+    def _attr(self, monkeypatch, key_mode):
+        from plone.pgthumbor.scaling import ThumborImageScale
+
+        _setup_env(monkeypatch)
+        ctx = MagicMock()
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        data = _mock_image_data()
+
+        key = tuple(
+            sorted(
+                {
+                    "fieldname": "image",
+                    "width": 800,
+                    "height": 600,
+                    "mode": key_mode,
+                }.items()
+            )
+        )
+        scale = ThumborImageScale(
+            ctx,
+            MagicMock(),
+            data=data,
+            fieldname="image",
+            width=400,
+            height=300,
+            uid="image-400-abc123",
+            mimetype="image/jpeg",
+            srcset=[
+                {
+                    "uid": "image-800-def456",
+                    "width": 800,
+                    "height": 600,
+                    "scale": 2,
+                    "key": key,
+                },
+            ],
+        )
+        return scale.srcset_attribute()
+
+    def test_mode_in_the_entry_key_changes_the_url(self, monkeypatch):
+        contain = self._attr(monkeypatch, "contain")
+        plain = self._attr(monkeypatch, "scale")
+
+        assert contain != plain
+
+
+class TestModeReachesTheUrlInScalingScaleUrl:
+    """Same regression as TestModeReachesTheUrl, on
+    ThumborImageScaling._scale_url (scaling.py:322) -- the @@images-level
+    override used for srcset-minted URLs, a different call site than
+    ThumborImageScale._scale_url covered by TestModeReachesTheUrl above.
+    """
+
+    def _url(self, monkeypatch, key_mode):
+        from plone.pgthumbor.scaling import ThumborImageScaling
+
+        _setup_env(monkeypatch)
+        ctx = MagicMock()
+        ctx._p_oid = struct.pack(">Q", 0x42)
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        ctx.image = _mock_image_data()
+        request = MagicMock()
+
+        monkeypatch.setattr(
+            "plone.pgthumbor.scaling._needs_auth_url",
+            lambda ctx, zoid, paranoid_mode=False: False,
+        )
+
+        scaling = ThumborImageScaling(ctx, request)
+        key = tuple(
+            sorted(
+                {
+                    "fieldname": "image",
+                    "width": 400,
+                    "height": 200,
+                    "mode": key_mode,
+                }.items()
+            )
+        )
+        return scaling._scale_url(
+            "uid123",
+            "jpeg",
+            scale_info={
+                "fieldname": "image",
+                "uid": "uid123",
+                "width": 400,
+                "height": 200,
+                "key": key,
+            },
+        )
+
+    def test_mode_in_the_key_changes_the_url(self, monkeypatch):
+        contain = self._url(monkeypatch, "contain")
+        plain = self._url(monkeypatch, "scale")
+
+        assert contain != plain

@@ -911,3 +911,35 @@ class TestTriggerIsEvaluatedBeforeDrafting:
 
         assert result is not None
         assert _open(result[0]).size == (600, 450)
+
+
+class TestTheCeilingHoldsEndToEnd:
+    """The cap cannot be configured past the point where it stops helping."""
+
+    def test_an_oversized_env_value_reaches_the_generator_clamped(self, monkeypatch):
+        from plone.pgthumbor import derivative
+        from tests.conftest import env_override
+        from tests.conftest import namedfile_storables
+
+        env_override(
+            monkeypatch,
+            PGTHUMBOR_SERVER_URL="http://thumbor:8888",
+            PGTHUMBOR_SECURITY_KEY="key",
+            PGTHUMBOR_SOURCE_MAX_EDGE="12000",
+        )
+        seen = []
+        monkeypatch.setattr(
+            derivative,
+            "build_derivative_bytes",
+            lambda source, max_edge: seen.append(max_edge),
+        )
+        with namedfile_storables():
+            image = _named_image(big_jpeg_bytes())
+            derivative.set_source_derivative(image)
+
+        # Not 12000.  A derivative at 12000px would be 144 MP, well past
+        # Thumbor's 75 MP MAX_PIXELS, and would reproduce the very 400 this
+        # package removes — silently, because generation would succeed and
+        # only Thumbor would object.
+        assert seen == [8000]
+        assert image._pgthumbor_source_info["max_edge"] == 8000

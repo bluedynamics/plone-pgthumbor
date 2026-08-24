@@ -6,7 +6,7 @@
   The packaging metadata already declared `GPL-2.0-only`, but the license text
   itself was missing from the repository, so GitHub reported "No license" and
   the terms could not be verified from the source tree alone. Fixes #24.
-  
+
 - Support the `scale` mode semantics bug from plone.scale < version 6.
   The scale mode names are opposite to the corresponding CSS `object-fit`
   property names. We expect that to be fixed in version 6.
@@ -14,6 +14,39 @@
 
 - Add `cloud-vinyl` and `plone.observability` to the ecosystem navigation
   dropdown in the docs.
+
+- Fix: `_heal_legacy_uid` now recovers the scale a uid was minted for instead
+  of guessing one from its width. The uid's md5 covers the whole parameter set
+  plus the field's modification time, so the candidates are enumerated and
+  re-hashed with `plone.scale`'s own `hash_key` until one matches. That
+  identifies the mode rather than assuming `"scale"`, tells two registered
+  scales sharing a width apart (`Haeuser 400:200` used to heal as
+  `preview 400:0`), and resolves height-driven `0:H` scales, which used to
+  heal into a request at the original's dimensions and could push Thumbor past
+  `MAX_PIXELS`.
+
+  Matching only works once the modification time is reconstructed:
+  `publishTraverse` adapts `(context, None)`, so the storage's `modified_time`
+  is `None` at healing time while the uid was hashed against the field's
+  modification time. A uid older than the image's last modification cannot be
+  identified at all and falls back to the first registered scale of that width,
+  never speculatively to the original's dimensions.
+
+  Closes [#21](https://github.com/bluedynamics/plone-pgthumbor/issues/21).
+
+- Fix: the scale mode now reaches the generated Thumbor URL. `plone.scale`
+  keeps `mode` in `info["key"]` and never copies it into the info dict, so
+  `info.get("mode", "scale")` always read `"scale"` and every URL was built
+  with `fit_in` — a `contain` scale got an `<img>` tag claiming the cropped
+  box and an image fitted inside it instead. Both `plone.namedfile` code paths
+  and the HiDPI `srcset` attribute are fixed. Forward-compatible with
+  [plone/plone.scale#156](https://github.com/plone/plone.scale/pull/156),
+  which adds `mode` to the info dict upstream.
+
+- Tests: pin `scale_mode_to_thumbor` against real `scalePILImage` output. The
+  mapping compensates for `plone.scale`'s inverted mode names behind a
+  `plone.scale < 6` gate, and until the fix above it was only ever reached
+  with `"scale"`, so the other two branches were unobservable.
 
 ## 0.6.5 (2026-08-04)
 

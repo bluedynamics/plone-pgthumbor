@@ -6,7 +6,7 @@
 
 **Architecture:** A legacy uid is `{fieldname}-{width}-{md5hex32}`, where the md5 covers the full parameter set plus the field's modification time. The parameters cannot be read back out, but they can be enumerated and re-hashed. A new pure module produces the candidate parameter sets; the storage reconstructs the modification time, hashes each candidate with `plone.scale`'s own `hash_key`, and takes the one that matches. A separate change makes the recovered `mode` actually reach the Thumbor URL, which it does not today.
 
-**Tech Stack:** Python 3.12+, `plone.scale` 5.x, `plone.namedfile` 7.3.0 (dev/CI may resolve 8.0.0a3), pytest, ruff.
+**Tech Stack:** Python 3.12+, `plone.scale` 5.x, `plone.namedfile` (production runs 7.x; dev and CI, with no lockfile, resolve 8.x), pytest, ruff.
 
 **Spec:** `docs/superpowers/specs/2026-08-24-heal-legacy-uid-geometry-design.md`
 

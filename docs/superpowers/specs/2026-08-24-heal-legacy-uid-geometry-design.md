@@ -13,9 +13,10 @@ the wrong shape.
 
 Issue #21 names three defects in `ThumborScaleStorage._heal_legacy_uid` and
 `_allowed_scale_sizes`. A pre-implementation review against the installed sources
-(`plone.scale` 5.0.0, `plone.namedfile` 7.3.0, sdist of 8.0.0a3, and Pillow itself)
-confirms all three, corrects the fix the issue proposes, and finds one further defect
-without which fixing #21 has no observable effect.
+(`plone.scale` 5.0.0, `plone.namedfile` 8.1.1 as resolved in this worktree —
+production runs 7.3.0 — plus the 8.0.0a3 sdist, and Pillow itself) confirms all
+three, corrects the fix the issue proposes, and finds one further defect without
+which fixing #21 has no observable effect.
 
 ## Review of the issue as filed
 
@@ -326,6 +327,13 @@ changes wholesale with the return type.
 - **`contain` maps to Thumbor's plain crop-to-fill**, which centres the crop.
   `plone.scale` also centres. Sub-pixel rounding differences between the two remain
   possible and are out of scope.
+- **Uids minted with extra scale parameters are not recognised.** `ImageScaling.scale()`
+  forwards arbitrary `**parameters` into `hash_key`, and `candidate_parameters`
+  enumerates only `fieldname`, `width`, `height`, `mode` and `scale`. A site whose
+  templates pass an extra keyword — a custom `quality`, say — mints uids this path can
+  never identify. Those uids are not lost: they land in the stale-uid fallback like any
+  other unidentifiable uid, so they render at the registered scale for their width
+  rather than 404.
 
 ## Rollout
 

@@ -83,8 +83,13 @@ def _image_fields(obj, schema):
             yield value
 
 
-def _iter_image_fields(obj):
-    """Yield every image value on *obj*, across its schema and behaviours."""
+def iter_image_fields(obj):
+    """Yield every image value on *obj*, across its schema and behaviours.
+
+    Public because ``modifiers.py`` asks the same question when it decides
+    which derivatives to keep out of a version snapshot.  A second walk
+    would be a second answer.
+    """
     try:
         schemata = tuple(iterSchemata(obj))
     except Exception:
@@ -178,7 +183,7 @@ def generate_source_derivatives(obj, event) -> None:
             # 0 is the documented kill switch, the thing an operator
             # reaches for during a bulk import or an incident.
             return
-        for named_image in _iter_image_fields(obj):
+        for named_image in iter_image_fields(obj):
             try:
                 _generate(named_image, max_edge)
             except Exception:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from itertools import pairwise
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
@@ -104,13 +105,44 @@ class TestProfileWiring:
 
         return pathlib.Path(plone.pgthumbor.__file__).parent
 
-    def test_profile_version_is_4(self):
+    def _upgrade_destinations(self):
+        from xml.etree import ElementTree
+
+        zcml = ElementTree.parse(self._package_dir() / "configure.zcml").getroot()
+        return [
+            int(element.get("destination"))
+            for element in zcml.iter()
+            if element.tag.endswith("upgradeStep")
+        ]
+
+    def test_the_profile_version_matches_the_newest_upgrade_step(self):
+        """A durable invariant rather than a number to keep editing.
+
+        It catches both halves of the real mistake: an upgrade step added
+        without bumping the profile, so no site ever runs it; and a bump
+        without a step, so sites are told they are current when they have
+        not been migrated.
+        """
         from xml.etree import ElementTree
 
         metadata = self._package_dir() / "profiles" / "default" / "metadata.xml"
-        version = ElementTree.parse(metadata).getroot().findtext("version")
+        version = int(ElementTree.parse(metadata).getroot().findtext("version"))
 
-        assert version == "4"
+        assert version == max(self._upgrade_destinations())
+
+    def test_the_upgrade_steps_form_an_unbroken_chain(self):
+        """No gaps, or a site sitting on the skipped version never upgrades."""
+        from xml.etree import ElementTree
+
+        zcml = ElementTree.parse(self._package_dir() / "configure.zcml").getroot()
+        steps = sorted(
+            (int(element.get("source")), int(element.get("destination")))
+            for element in zcml.iter()
+            if element.tag.endswith("upgradeStep")
+        )
+
+        for (_, destination), (source, _) in pairwise(steps):
+            assert source == destination
 
     def test_upgrade_step_3_to_4_is_registered(self):
         from xml.etree import ElementTree

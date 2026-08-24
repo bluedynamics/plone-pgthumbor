@@ -174,7 +174,7 @@ class TestImageFieldDiscovery:
         monkeypatch.setattr(subscribers, "iterSchemata", explode)
 
         with caplog.at_level("WARNING"):
-            assert list(subscribers._iter_image_fields(_Content())) == []
+            assert list(subscribers.iter_image_fields(_Content())) == []
 
         assert "schemata" in caplog.text.lower()
 
@@ -189,7 +189,7 @@ class TestImageFieldDiscovery:
             _pin_schema(monkeypatch, schema)
             content = _Content(image=first, lead_image=second, title="x")
 
-            assert list(subscribers._iter_image_fields(content)) == [first, second]
+            assert list(subscribers.iter_image_fields(content)) == [first, second]
 
 
 class TestShortCircuits:

@@ -113,4 +113,12 @@
       handler=".setuphandlers.upgrade_to_4"
       />
 
+  <genericsetup:upgradeStep
+      title="Keep Thumbor source derivatives out of version snapshots"
+      profile="plone.pgthumbor:default"
+      source="4"
+      destination="5"
+      handler=".setuphandlers.upgrade_to_5"
+      />
+
 </configure>

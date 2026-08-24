@@ -9,12 +9,20 @@ permissions:
 
 jobs:
   test:
-    name: Python ${{ matrix.python-version }}
+    name: Python ${{ matrix.python-version }} · namedfile ${{ matrix.namedfile.label }}.x
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.12", "3.13"]
+        # plone.namedfile 7.x and 8.x put a *different* ImageScale method on
+        # the live path — scaling._HAS_SCALE_URL forks on it — so a suite
+        # that only ever sees one of them tests half the package. There is
+        # no lockfile here, so an unconstrained resolve gets 8.x while
+        # production runs 7.x, which is the half that was never covered.
+        namedfile:
+          - {spec: "<8", label: "7"}
+          - {spec: ">=8", label: "8"}
 
     steps:
       - uses: actions/checkout@v4
@@ -30,19 +38,31 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv venv && uv pip install -e ".[test]"
+        run: uv venv && uv pip install -e ".[test]" "plone.namedfile${{ matrix.namedfile.spec }}"
+
+      - name: Verify the pin took
+        run: |
+          uv run --no-sync python -c "
+          import importlib.metadata as m
+          from plone.namedfile.scaling import ImageScale
+          print('plone.namedfile', m.version('plone.namedfile'),
+                '| _HAS_SCALE_URL =', hasattr(ImageScale, '_scale_url'))
+          "
 
       - name: Run tests with coverage
-        run: uv run pytest --cov --cov-report=
+        # --no-sync is load-bearing. A plain `uv run` re-resolves from
+        # pyproject.toml, silently replacing the pin above, and the matrix
+        # would then run 8.x in all four jobs while claiming to cover both.
+        run: uv run --no-sync pytest --cov --cov-report=
 
       - name: Rename coverage data
-        run: mv .coverage .coverage.${{ matrix.python-version }}
+        run: mv .coverage .coverage.${{ matrix.python-version }}-nf${{ matrix.namedfile.label }}
 
       - name: Upload coverage data
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-data-${{ matrix.python-version }}
-          path: .coverage.${{ matrix.python-version }}
+          name: coverage-data-${{ matrix.python-version }}-nf${{ matrix.namedfile.label }}
+          path: .coverage.${{ matrix.python-version }}-nf${{ matrix.namedfile.label }}
           include-hidden-files: true
           if-no-files-found: ignore
 

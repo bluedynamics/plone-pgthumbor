@@ -2,6 +2,15 @@
 
 ## 0.7.1 (unreleased)
 
+- Tests: CI now runs the suite against `plone.namedfile` 7.x **and** 8.x.
+  The two put a different `ImageScale` method on the live path —
+  `scaling._HAS_SCALE_URL` forks on it — so a run that only ever saw one of
+  them exercised half the package. There is no lockfile here, so an
+  unconstrained resolve gets 8.x while production runs 7.x, which was
+  exactly the half CI never covered. The test step uses `uv run --no-sync`,
+  because a plain `uv run` re-resolves from `pyproject.toml` and would
+  silently undo the pin, leaving four jobs that all claim to cover both.
+
 ## 0.7.0 (2026-08-24)
 
 - Add Thumbor source derivatives. Thumbor refuses images above its `MAX_PIXELS`

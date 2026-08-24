@@ -36,6 +36,14 @@
 
   Closes [#21](https://github.com/bluedynamics/plone-pgthumbor/issues/21).
 
+- Fix: a healed uid for a scale with both dimensions set now recovers the
+  scale's name instead of `scale=None`, so `_get_crop` still finds the
+  configured crop. `hash_key` drops the `scale` key whenever width and
+  height are both truthy, so a named call (`tag(scale="Haeuser")`) and the
+  `image_scales` indexer's `scale=None` call mint the identical uid;
+  healing could not tell them apart and previously assumed the uncropped
+  one.
+
 - Fix: the scale mode now reaches the generated Thumbor URL. `plone.scale`
   keeps `mode` in `info["key"]` and never copies it into the info dict, so
   `info.get("mode", "scale")` always read `"scale"` and every URL was built

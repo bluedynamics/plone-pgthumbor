@@ -102,8 +102,15 @@ def candidate_parameters(fieldname, dimension, scales, original_size=None):
             }
             if width and height:
                 # hash_key drops "scale" here, so all three call shapes
-                # collapse into one hash.
-                yield {**base, "scale": None}
+                # collapse into one hash: the named call, the image_scales
+                # call (scale=None), and the no-scale-key srcset call all
+                # mint the same uid, and this fix cannot tell them apart.
+                # Recover the name anyway: it is free (the uid is
+                # unaffected either way), and it is what keeps a healed
+                # uid's configured crop -- _get_crop reads the scale name
+                # out of these parameters, not out of the uid, so assuming
+                # scale=None would silently drop an editorial crop.
+                yield {**base, "scale": name}
             else:
                 yield {**base, "scale": None}
                 yield {**base, "scale": name}

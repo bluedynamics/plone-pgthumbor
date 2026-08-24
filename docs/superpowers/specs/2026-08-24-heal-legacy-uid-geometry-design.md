@@ -170,7 +170,9 @@ would still fail to heal when the uid came from cached HTML.
 
 For every `(name, w, h)` with `w == dimension`, crossed with the modes:
 
-- `w and h` → one shape: `{fieldname, width, height, mode, scale: None}`
+- `w and h` → one shape: `{fieldname, width, height, mode, scale: name}` — recovering the
+  name is free, since the uid is identical either way, and it is what keeps a healed
+  uid's configured crop; see Accepted limitations for the residual ambiguity this leaves
 - otherwise → three shapes: `scale: None`, `scale: name`, and no `scale` key at all
 - additionally when `dimension == 0`: `width=None, height=None` (a genuine `tag()` with
   no width), in the `scale: None` and no-`scale`-key shapes — such a call carries no
@@ -324,6 +326,12 @@ changes wholesale with the return type.
   Such a uid heals through the fallback or 404s, as today.
 - **A uid older than the image's last modification cannot be identified**, only guessed
   at (§4). This is inherent: `modified` is part of the hash.
+- **For a scale with both dimensions set, the uid cannot distinguish a call that passed
+  the scale name from one that passed `scale=None`.** `hash_key` deletes the `scale` key
+  whenever width *and* height are truthy, so `tag(scale="Haeuser")` and the
+  `image_scales` indexer's `scale=None` call mint the identical uid, and healing assumes
+  the named call. Where a crop is configured for that scale, a healed
+  `image_scales`-minted uid therefore renders cropped while its live render does not.
 - **`contain` maps to Thumbor's plain crop-to-fill**, which centres the crop.
   `plone.scale` also centres. Sub-pixel rounding differences between the two remain
   possible and are out of scope.

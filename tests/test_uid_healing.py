@@ -112,13 +112,18 @@ class TestCandidateParameters:
 
     def test_both_dimensions_truthy_yields_one_shape_per_mode(self):
         """hash_key deletes the scale key when width and height are truthy,
-        so the name path and the explicit-dimensions path collapse to one."""
+        so the name path and the explicit-dimensions path collapse to one
+        uid. The recovered parameters must still carry the scale name: it is
+        free (the uid is unaffected either way), and it is what keeps a
+        healed uid's configured crop, since _get_crop reads the name out of
+        the parameters pre_scale was called with, not out of the uid
+        (issue #21 finding 3)."""
         from plone.pgthumbor.uid_healing import SCALE_MODES
 
         candidates = self._candidates("image", 400, (("Haeuser", 400, 200),))
 
         assert len(candidates) == len(SCALE_MODES)
-        assert all(c["scale"] is None for c in candidates)
+        assert all(c["scale"] == "Haeuser" for c in candidates)
         assert {c["mode"] for c in candidates} == set(SCALE_MODES)
         assert all((c["width"], c["height"]) == (400, 200) for c in candidates)
 

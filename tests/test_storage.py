@@ -215,6 +215,27 @@ class TestHealByHashMatch:
         assert recorded["mode"] == "cover"
         assert (recorded["width"], recorded["height"]) == (400, 200)
 
+    def test_recovers_the_scale_name_for_a_width_and_height_scale(self):
+        """Issue #21 finding 3: a healed W:H uid must keep its configured
+        crop. hash_key drops "scale" from the hash whenever both dimensions
+        are truthy, so the named call (tag(scale="Haeuser")) and the
+        image_scales call (scale=None) mint the identical uid -- proven
+        below. _get_crop reads the scale name out of the recovered
+        parameters, not out of the uid, so healing must still recover the
+        name rather than None."""
+        minting, healing = self._storages()
+        named_uid = minting.hash_key(
+            fieldname="image", width=400, height=200, mode="scale", scale="Haeuser"
+        )
+        explicit_uid = minting.hash_key(
+            fieldname="image", width=400, height=200, mode="scale", scale=None
+        )
+        assert named_uid == explicit_uid  # the collision this finding is about
+
+        _result, recorded = self._heal(healing, named_uid, (("Haeuser", 400, 200),))
+
+        assert recorded["scale"] == "Haeuser"
+
     def test_disambiguates_two_scales_sharing_a_width(self):
         """Issue #21 defect 2: Haeuser 400:200 healed as preview 400:0."""
         minting, healing = self._storages()

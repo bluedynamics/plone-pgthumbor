@@ -382,3 +382,57 @@ class TestThumborUrlCrop:
         crypto = CryptoURL(key=KEY)
         expected = crypto.generate(image_url="42/ff", width=400, height=300, crop=crop)
         assert path == expected
+
+
+class TestModeMappingMatchesPloneScale:
+    """Derive the expectation from Pillow instead of restating the table.
+
+    scale_mode_to_thumbor compensates for plone.scale's inverted mode names
+    behind a `PLONE_SCALE_VERSION < 6` gate, on the expectation that
+    plone/plone.scale#78 lands in 6. If 6 ships without that fix, or if the
+    floor moves before anyone checks, the swap disappears and every cropping
+    scale silently becomes a fit-in. This test notices.
+    """
+
+    BOX = (400, 200)
+    # Aspect ratios deliberately unlike the box, so "cropped" is detectable
+    # as a changed aspect ratio rather than as a filled box. An original that
+    # already matches the box would make cover's upscale look like a crop.
+    ORIGINALS = ((1000, 400), (400, 1000))
+
+    def _crops(self, original, mode):
+        from PIL import Image
+        from plone.scale.scale import scalePILImage
+
+        scaled = scalePILImage(
+            Image.new("RGB", original), self.BOX[0], self.BOX[1], mode=mode
+        )
+        original_ratio = original[0] / original[1]
+        scaled_ratio = scaled.size[0] / scaled.size[1]
+        return abs(scaled_ratio - original_ratio) > 0.01
+
+    def test_fit_in_says_the_same_as_plone_scale(self):
+        from plone.pgthumbor.url import scale_mode_to_thumbor
+
+        for original in self.ORIGINALS:
+            for mode in ("scale", "contain", "cover"):
+                params = scale_mode_to_thumbor(mode, smart_cropping=True)
+                message = f"{mode} on {original[0]}x{original[1]}"
+                assert params["fit_in"] is not self._crops(original, mode), message
+
+    def test_smart_is_enabled_on_the_cropping_path(self):
+        from plone.pgthumbor.url import scale_mode_to_thumbor
+
+        for original in self.ORIGINALS:
+            for mode in ("scale", "contain", "cover"):
+                if not self._crops(original, mode):
+                    continue
+                params = scale_mode_to_thumbor(mode, smart_cropping=True)
+                assert params["smart"] is True, mode
+
+    def test_smart_stays_off_when_the_setting_is_off(self):
+        from plone.pgthumbor.url import scale_mode_to_thumbor
+
+        for mode in ("scale", "contain", "cover"):
+            params = scale_mode_to_thumbor(mode, smart_cropping=False)
+            assert params["smart"] is False, mode

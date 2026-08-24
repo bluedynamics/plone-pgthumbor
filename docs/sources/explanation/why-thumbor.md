@@ -125,8 +125,15 @@ center-crop or simple ratio-based scaling.
 
 **Fit-in mode.** Thumbor's `fit_in` resizes the image to fit within the target
 dimensions without cropping -- equivalent to CSS `object-fit: contain`.
-This maps
-directly to Plone's "scale" and "contain" scale modes.
+plone.pgthumbor
+maps this to Plone's "scale" and "cover" scale modes; "contain" crops to fill the
+box instead.
+`plone.scale`'s own mode names are the reverse of what they describe (its
+alias for `cover` is `scale-crop-to-fill`).
+`scale_mode_to_thumbor` swaps `cover`
+and `contain` behind a `plone.scale < 6` gate to compensate.
+See
+[plone/plone.scale#78](https://github.com/plone/plone.scale/issues/78).
 
 **Format conversion.** Thumbor can convert between image formats (JPEG, PNG, WebP,
 AVIF) on the fly based on the client's `Accept` header.

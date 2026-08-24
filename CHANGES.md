@@ -2,12 +2,6 @@
 
 ## 0.6.6 (unreleased)
 
-- Make uv check git tags instead of mtime of pyproject.toml.
-  This prevents a problem where a source checkout version specifier was cached
-  by uv because the pyproject.toml file didn't change and dependency version
-  constraints could not be fulfilled. With this fix the git commits and tags
-  are checked instead by uv. For other tools, this has no consequences.
-
 - Add `cloud-vinyl` and `plone.observability` to the ecosystem navigation
   dropdown in the docs.
 

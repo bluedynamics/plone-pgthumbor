@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.7.1 (unreleased)
+
 ## 0.7.0 (2026-08-24)
 
 - Add Thumbor source derivatives. Thumbor refuses images above its `MAX_PIXELS`

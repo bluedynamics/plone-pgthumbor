@@ -159,15 +159,33 @@ class TestUnreadableFactories:
         with pytest.raises(UnidentifiedImageError):
             _open(SVG_BYTES)
 
-    def test_truncated_jpeg_opens_but_fails_to_load(self):
+    def test_truncated_jpeg_opens_but_fails_to_load(self, monkeypatch):
         # The header survives, so `open` succeeds and only `load` raises.
         # Anything reading `im.size` before `load()` therefore sees a
         # plausible size for an image it cannot decode.
+        #
+        # The flag is pinned explicitly because plone.scale flips it to True
+        # process-wide at import (see test_derivative), and whether that
+        # import has happened yet depends on test order.
+        from PIL import ImageFile
+
+        monkeypatch.setattr(ImageFile, "LOAD_TRUNCATED_IMAGES", False)
         img = _open(truncated_jpeg_bytes())
 
         assert img.size == (80, 60)
         with pytest.raises(OSError):
             img.load()
+
+    def test_truncated_jpeg_decodes_when_pillow_is_told_to_tolerate_it(
+        self, monkeypatch
+    ):
+        from PIL import ImageFile
+
+        monkeypatch.setattr(ImageFile, "LOAD_TRUNCATED_IMAGES", True)
+        img = _open(truncated_jpeg_bytes())
+        img.load()
+
+        assert img.size == (80, 60)
 
 
 class TestNamedfileStorables:

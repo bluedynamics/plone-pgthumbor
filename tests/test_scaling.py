@@ -10,6 +10,7 @@ import struct
 
 SERVER = "http://thumbor:8888"
 KEY = "test-secret-key"
+_MISSING = object()
 
 
 def _mock_blob(oid_int=0x42, serial_int=0xFF):
@@ -1147,3 +1148,115 @@ class TestThumborImageScalingSrcset:
 
         assert "srcset=" in tag
         assert f"{SERVER}/signed/100/42/ff 100w" in tag
+
+
+class TestScaleParam:
+    """Reading call parameters back out of a plone.scale info dict."""
+
+    def _key(self, **parameters):
+        """A key tuple shaped the way plone.scale's hash() builds it."""
+        return tuple(sorted(parameters.items()))
+
+    def test_reads_from_the_key_tuple(self):
+        from plone.pgthumbor.scaling import _scale_param
+
+        info = {"key": self._key(mode="cover", width=400)}
+        assert _scale_param(info, "mode", "scale") == "cover"
+
+    def test_key_wins_over_the_info_dict(self):
+        """plone/plone.scale#156 will add mode to the dict; the key holds the
+        raw value hash_key hashed, so it stays authoritative."""
+        from plone.pgthumbor.scaling import _scale_param
+
+        info = {"key": self._key(mode="contain"), "mode": "scale"}
+        assert _scale_param(info, "mode", "scale") == "contain"
+
+    def test_falls_back_to_the_info_dict(self):
+        from plone.pgthumbor.scaling import _scale_param
+
+        assert _scale_param({"mode": "cover"}, "mode", "scale") == "cover"
+
+    def test_default_when_absent_everywhere(self):
+        from plone.pgthumbor.scaling import _scale_param
+
+        assert _scale_param({"key": self._key(width=400)}, "mode", "scale") == ("scale")
+
+    def test_none_info_returns_the_default(self):
+        from plone.pgthumbor.scaling import _scale_param
+
+        assert _scale_param(None, "mode", "scale") == "scale"
+
+    def test_malformed_key_does_not_raise(self):
+        from plone.pgthumbor.scaling import _scale_param
+
+        assert _scale_param({"key": ("hash",)}, "mode", "scale") == "scale"
+
+    def test_explicit_none_in_the_key_is_returned(self):
+        from plone.pgthumbor.scaling import _scale_param
+
+        info = {"key": self._key(mode=None)}
+        assert _scale_param(info, "mode", "scale") is None
+
+
+class TestModeReachesTheUrl:
+    """Regression for the gap that made every URL fit-in (issue #21).
+
+    These assert that the mode is *threaded through*, not what the mapping
+    does with it. Which mode implies fit-in is pinned separately in
+    tests/test_url.py, where it is derived from Pillow rather than restated,
+    so these stay correct if plone/plone.scale#78 changes the mapping.
+    """
+
+    def _url(self, monkeypatch, key_mode=_MISSING, info_mode=_MISSING):
+        from plone.pgthumbor.scaling import ThumborImageScale
+
+        _setup_env(monkeypatch)
+        ctx = MagicMock()
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        info = {
+            "data": _mock_image_data(),
+            "fieldname": "image",
+            "width": 400,
+            "height": 200,
+            "uid": "image-400-abc123",
+            "mimetype": "image/jpeg",
+        }
+        if key_mode is not _MISSING:
+            info["key"] = tuple(
+                sorted(
+                    {
+                        "fieldname": "image",
+                        "width": 400,
+                        "height": 200,
+                        "mode": key_mode,
+                    }.items()
+                )
+            )
+        if info_mode is not _MISSING:
+            info["mode"] = info_mode
+        return ThumborImageScale(ctx, MagicMock(), **info).url
+
+    def test_mode_in_the_key_changes_the_url(self, monkeypatch):
+        """The defect: pre_scale puts mode only in the key, so this used to
+        make no difference at all and every URL came out fit-in."""
+        contain = self._url(monkeypatch, key_mode="contain")
+        plain = self._url(monkeypatch, key_mode="scale")
+
+        assert contain != plain
+
+    def test_key_mode_agrees_with_an_explicit_mode(self, monkeypatch):
+        for mode in ("scale", "cover", "contain"):
+            from_key = self._url(monkeypatch, key_mode=mode)
+            explicit = self._url(monkeypatch, info_mode=mode)
+            assert from_key == explicit, mode
+
+    def test_missing_mode_everywhere_defaults_to_scale(self, monkeypatch):
+        assert self._url(monkeypatch) == self._url(monkeypatch, info_mode="scale")
+
+    def test_mode_alias_is_normalised(self, monkeypatch):
+        """hash_key hashes the raw alias the caller passed, so the URL for
+        "scale-crop-to-fit" must equal the one for "contain"."""
+        alias = self._url(monkeypatch, key_mode="scale-crop-to-fit")
+        canonical = self._url(monkeypatch, key_mode="contain")
+
+        assert alias == canonical

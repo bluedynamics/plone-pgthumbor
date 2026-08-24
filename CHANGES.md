@@ -2,11 +2,16 @@
 
 ## 0.6.6 (unreleased)
 
+- Bump `hynek/build-and-inspect-python-package` from v2 to v3.0.1. Hatchling now
+  emits `Metadata-Version: 2.5`, which the Twine bundled in v2 rejects with
+  `InvalidDistribution: '2.5' is not a valid metadata version` — the release
+  build failed before uploading anything. v3 ships Twine 7, which supports it.
+
 - Add the `LICENSE` file with the full GNU General Public License v2.0 text.
   The packaging metadata already declared `GPL-2.0-only`, but the license text
   itself was missing from the repository, so GitHub reported "No license" and
   the terms could not be verified from the source tree alone. Fixes #24.
-  
+
 - Support the `scale` mode semantics bug from plone.scale < version 6.
   The scale mode names are opposite to the corresponding CSS `object-fit`
   property names. We expect that to be fixed in version 6.

@@ -22,6 +22,7 @@ from ZODB.utils import u64
 from zope.component import queryAdapter
 
 import logging
+import math
 
 
 logger = logging.getLogger(__name__)
@@ -102,6 +103,89 @@ def _needs_auth_url(
         return True  # fail safe → use auth URL
 
 
+def _select_source(data):
+    """The field value a Thumbor URL should name: derivative, or original.
+
+    Callers that go on to *emit* a URL must also translate the crop into
+    the selected source's coordinates.  ``_build_thumbor_url`` does both,
+    in that order, and is the only place that should — this helper exists
+    because ``srcset`` needs the same answer to decide which candidates it
+    can satisfy, and duplicating the rule there would let the two drift.
+    """
+    derivative = getattr(data, "_pgthumbor_source", None)
+    if derivative is None:
+        return data
+    info = getattr(data, "_pgthumbor_source_info", None)
+    recorded = info.get("source_ids") if isinstance(info, dict) else None
+    # None means "not comparable", not "mismatched".  A derivative
+    # generated before its original was committed has no ids to record, and
+    # reading that as a mismatch would make every freshly uploaded image
+    # permanently refuse the derivative it just generated.  Where ids *were*
+    # recorded, a difference means the original was mutated in place —
+    # NamedBlobImage.data is a settable property and migration scripts use
+    # it — so the derivative is stale.
+    if recorded is None or recorded == get_blob_ids(data):
+        return derivative
+    return data
+
+
+def _image_size(image):
+    """``(width, height)`` for a field value, or None when unknowable."""
+    try:
+        size = image.getImageSize()
+        width, height = int(size[0]), int(size[1])
+    except Exception:
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return width, height
+
+
+def _rescale_crop(crop, original_size, source_size):
+    """Map a crop box from original pixels into *source_size* pixels.
+
+    ``plone.app.imagecropping`` stores boxes in the original's coordinates
+    and ``_get_crop`` passes them through untouched, so against a 4000 px
+    derivative of an 11811 px original an unscaled box cuts into empty
+    space.
+
+    The box arrives nested as ``((left, top), (right, bottom))``, so it
+    cannot be mapped element-wise.  Each axis gets its own factor, taken
+    from the derivative's *actual* size rather than from the cap — height
+    rounding means 4000x2999, not 4000x3000, and one shared factor drifts
+    past the bottom edge.
+
+    Rounding is direction-aware: floor the near edges and ceil the far
+    ones, so the mapped region covers the original selection instead of
+    cutting into the subject.  Then clamp to the derivative's bounds.
+
+    Returns None when the result is unusable — an unknown original size, or
+    a region that collapsed to zero width or height.  None means "no crop",
+    which the caller has to honour *before* it forces crop semantics on.
+    """
+    if not original_size or not source_size:
+        return None
+    original_width, original_height = original_size
+    source_width, source_height = source_size
+    if original_width <= 0 or original_height <= 0:
+        return None
+
+    (left, top), (right, bottom) = crop
+    factor_x = source_width / original_width
+    factor_y = source_height / original_height
+
+    left = max(0, math.floor(left * factor_x))
+    top = max(0, math.floor(top * factor_y))
+    right = min(source_width, math.ceil(right * factor_x))
+    bottom = min(source_height, math.ceil(bottom * factor_y))
+
+    if right <= left or bottom <= top:
+        # libthumbor silently ignores an all-zero box, which would render a
+        # full uncropped image under crop semantics rather than erroring.
+        return None
+    return ((left, top), (right, bottom))
+
+
 def _build_thumbor_url(context, data, width, height, mode, crop=None):
     """Build a Thumbor URL for the given image data and dimensions.
 
@@ -111,6 +195,8 @@ def _build_thumbor_url(context, data, width, height, mode, crop=None):
     In that case fit_in is forced True and smart is forced False (explicit
     crop overrides smart detection).
     """
+    # The skip decision reads the *original's* content type, before any
+    # source selection: an SVG with a raster derivative is still an SVG.
     content_type = getattr(data, "contentType", "") if data else ""
     if content_type in _SKIP_THUMBOR_TYPES:
         return None
@@ -119,8 +205,20 @@ def _build_thumbor_url(context, data, width, height, mode, crop=None):
     if cfg is None:
         return None
 
-    blob_ids = get_blob_ids(data)
+    source = _select_source(data)
+
+    blob_ids = get_blob_ids(source)
     if blob_ids is None:
+        # No fallback to the original, and that omission is the feature.
+        #
+        # A derivative created in the current transaction has no committed
+        # TID yet.  Substituting the original here would emit a permanent,
+        # direct, signed Thumbor URL naming an image that may exceed
+        # MAX_PIXELS, and freeze it into catalog metadata — where a browser
+        # fetches it without Plone in the path, so the uid-healing route
+        # can never repair it.  Returning None yields a uid fallback
+        # instead, which heals on the next render and is corrected for good
+        # by the backfill's second phase.
         return None
 
     zoid, tid = blob_ids
@@ -133,10 +231,31 @@ def _build_thumbor_url(context, data, width, height, mode, crop=None):
         if _needs_auth_url(context, content_zoid_int, cfg.paranoid_mode):
             content_zoid = content_zoid_int
 
+    source_size = _image_size(source)
+
+    # Never request more pixels than the selected source holds.  Thumbor's
+    # MAX_PIXELS guards the *source*, not the output, so an 11811 px
+    # rendition of a 4000 px derivative would succeed by upscaling —
+    # hundreds of megabytes in a pod limited to 1536Mi, and a
+    # multi-megabyte srcset candidate for the browser.  A zero means
+    # "auto" and is left alone.
+    if source_size:
+        width = min(width, source_size[0]) if width else width
+        height = min(height, source_size[1]) if height else height
+
+    # Translate the crop before anything acts on it.  Gated on "a
+    # derivative was actually selected", never on "a crop exists": a
+    # skipped or failed derivative carrying a crop must pass the box
+    # through untouched.
+    if crop is not None and source is not data:
+        crop = _rescale_crop(crop, _image_size(data), source_size)
+
     thumbor_params = scale_mode_to_thumbor(mode, smart_cropping=cfg.smart_cropping)
     if crop is not None:
         # Explicit crop overrides smart detection — let Thumbor crop
-        # the specified region and then fit the result.
+        # the specified region and then fit the result.  This has to come
+        # *after* the translation above: a crop dropped as degenerate must
+        # not leave the scale rendering under crop semantics without a crop.
         thumbor_params["fit_in"] = True
         thumbor_params["smart"] = False
 
@@ -373,6 +492,15 @@ class ThumborImageScaling(ImageScaling):
         if not original_width or not original_height:
             return None
 
+        # Never offer a candidate the selected source cannot satisfy.
+        # Thumbor's MAX_PIXELS guards the source, not the output, so a
+        # request above the derivative succeeds by upscaling rather than
+        # failing — which is how a loud 400 becomes a silent multi-megabyte
+        # candidate.  Dimensions reported to Plone still come from the
+        # original; only the list of offered widths changes.
+        source_size = _image_size(_select_source(data))
+        widest = min(original_width, source_size[0]) if source_size else original_width
+
         srcset_urls = []
 
         # Back-fill an original-size entry when no configured scale
@@ -380,7 +508,7 @@ class ThumborImageScaling(ImageScaling):
         # undersized original still yields a non-empty srcset. The URL
         # always comes from a scale view, never a bare uid string.
         available_widths = [width for (width, _height) in self.available_sizes.values()]
-        if original_width not in available_widths:
+        if original_width not in available_widths and original_width <= widest:
             scale_view = self.scale(
                 fieldname=fieldname,
                 width=original_width,
@@ -392,7 +520,7 @@ class ThumborImageScaling(ImageScaling):
                 srcset_urls.append(f"{scale_view.url} {scale_view.width}w")
 
         for _name, (width, height) in self.available_sizes.items():
-            if width <= original_width:
+            if width <= widest:
                 scale_view = self.scale(
                     fieldname=fieldname,
                     width=width,

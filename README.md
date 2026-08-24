@@ -2,11 +2,13 @@
 
 Thumbor image scaling for Plone — replaces in-ZODB scales with Thumbor redirect URLs.
 
-Instead of generating and storing scaled images in ZODB annotations (via Pillow), this package intercepts Plone's image scaling and returns signed [Thumbor](https://www.thumbor.org/) URLs. Thumbor fetches the original blob directly from PostgreSQL, scales on demand, and caches the result — no image data ever enters ZODB.
+Instead of generating and storing scaled images in ZODB annotations (via Pillow), this package intercepts Plone's image scaling and returns signed [Thumbor](https://www.thumbor.org/) URLs. Thumbor fetches the blob directly from PostgreSQL, scales on demand, and caches the result — no scaled image data ever enters ZODB, and nothing is decoded while a page is served.
+
+Large or non-sRGB originals get one extra blob: a capped, colour-normalised *source derivative* that Thumbor reads instead of the print-resolution original. See [Source derivatives](#source-derivatives) below.
 
 ## How it works
 
-Plone generates signed Thumbor URLs and either embeds them directly or redirects to them — it never processes image data itself.
+Plone generates signed Thumbor URLs and either embeds them directly or redirects to them — it processes no image data while serving the request.
 
 **Classic Plone / direct `@@images` traversal**
 
@@ -57,6 +59,7 @@ Add to your Plone site's GenericSetup profile dependencies or install via the Ad
 | `PGTHUMBOR_SERVER_URL` | (required) | Public Thumbor base URL, e.g. `http://thumbor:8888` |
 | `PGTHUMBOR_SECURITY_KEY` | (required) | Shared HMAC-SHA1 signing key |
 | `PGTHUMBOR_UNSAFE` | `false` | Use `/unsafe/` URLs instead of signed — dev only |
+| `PGTHUMBOR_SOURCE_MAX_EDGE` | `4000` | Longest edge of the source derivative, in pixels. `0` disables generation; values above `8000` are clamped |
 
 Environment variables take precedence over Plone registry settings (`IThumborSettings`).
 
@@ -71,6 +74,17 @@ Environment variables take precedence over Plone registry settings (`IThumborSet
 `plone.scale`'s own mode names are the reverse of what they describe: its alias for `cover` is `scale-crop-to-fill`, and its docstring claims to follow CSS `background-size`.
 `scale_mode_to_thumbor` swaps `cover` and `contain` behind a `plone.scale < 6` gate to compensate — see [plone/plone.scale#78](https://github.com/plone/plone.scale/issues/78).
 The table above is the resulting live behaviour, not `plone.scale`'s naming.
+
+## Source derivatives
+
+Thumbor refuses to process images above its `MAX_PIXELS` limit (75 MP by default) and answers HTTP 400, which is what a print original at 100x75 cm and 300 dpi does to it. It also fetches the *whole* original on every cache miss, so a 40 MB blob crosses the network and the decoder to produce a 3 KB listing thumbnail.
+
+On add and modify, a subscriber stores a capped, sRGB-normalised copy of the image beside the original, as `NamedBlobImage._pgthumbor_source`, and Thumbor URLs address that copy instead. The original is never modified and `@@download` still serves it byte for byte. A derivative is generated when the longest edge exceeds `PGTHUMBOR_SOURCE_MAX_EDGE`, or when the image is not a clean sRGB raster (CMYK, LAB, 16-bit integer modes, palette with transparency). SVG and animated GIFs are skipped. This is the one place where the Plone process decodes pixels, and it is bounded to one decode at a time.
+
+The default cap of 4000 is a starting point for a site nobody has measured, not an answer for yours; the cap in force is recorded with each derivative, so changing it later is an ordinary backfill run rather than a migration.
+
+- [Choose the source derivative cap](https://github.com/bluedynamics/plone-pgthumbor/blob/main/docs/sources/how-to/choose-source-max-edge.md) — measure your own numbers and pick a value
+- [Backfill Thumbor source derivatives](https://github.com/bluedynamics/plone-pgthumbor/blob/main/docs/sources/how-to/backfill-source-derivatives.md) — give existing content derivatives and repair the catalog
 
 ## Try It Out
 

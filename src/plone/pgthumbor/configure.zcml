@@ -78,6 +78,24 @@
       file="imagecropping.zcml"
       />
 
+  <!-- Thumbor source derivatives, generated on add and on modify.
+       Registered for IDexterityContent and never for "*": this package
+       declares a z3c.autoinclude plugin, so its ZCML is loaded for the
+       whole instance and an unqualified registration would fire in every
+       site in the process, including ones that never installed the add-on.
+       IObjectAddedEvent also fires on rename, move, paste and content
+       import; the handler is idempotent, which is what makes those free. -->
+  <subscriber
+      for="plone.dexterity.interfaces.IDexterityContent
+           zope.lifecycleevent.interfaces.IObjectAddedEvent"
+      handler=".subscribers.generate_source_derivatives"
+      />
+  <subscriber
+      for="plone.dexterity.interfaces.IDexterityContent
+           zope.lifecycleevent.interfaces.IObjectModifiedEvent"
+      handler=".subscribers.generate_source_derivatives"
+      />
+
   <!-- Upgrade steps -->
   <genericsetup:upgradeStep
       title="Remove dead registry keys (server_url, security_key, unsafe)"
@@ -85,6 +103,22 @@
       source="2"
       destination="3"
       handler=".setuphandlers.upgrade_to_3"
+      />
+
+  <genericsetup:upgradeStep
+      title="Register the source_max_edge setting"
+      profile="plone.pgthumbor:default"
+      source="3"
+      destination="4"
+      handler=".setuphandlers.upgrade_to_4"
+      />
+
+  <genericsetup:upgradeStep
+      title="Keep Thumbor source derivatives out of version snapshots"
+      profile="plone.pgthumbor:default"
+      source="4"
+      destination="5"
+      handler=".setuphandlers.upgrade_to_5"
       />
 
 </configure>

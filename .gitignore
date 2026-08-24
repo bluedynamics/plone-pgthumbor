@@ -19,6 +19,11 @@ htmlcov/
 .venv/
 venv/
 
+# No lockfile by design: production runs plone.namedfile 7.x while a
+# fresh resolve gets 8.x, and pinning here would hide that split.
+# uv run writes one anyway, so keep it out of the tree.
+uv.lock
+
 # Editor / IDE
 .idea/
 .vscode/

@@ -47,6 +47,20 @@ class IThumborSettings(Interface):
         default=False,
     )
 
+    source_max_edge = schema.Int(
+        title="Source derivative cap",
+        description=(
+            "Longest edge in pixels for the Thumbor source derivative. "
+            "0 disables derivative generation entirely. Values above 8000 "
+            "are clamped — the cap is what keeps a derivative below "
+            "Thumbor's MAX_PIXELS limit."
+        ),
+        required=False,
+        default=4000,
+        min=0,
+        max=8000,
+    )
+
     paranoid_mode = schema.Bool(
         title="Paranoid Mode",
         description=(

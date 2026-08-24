@@ -23,13 +23,25 @@ def _mock_blob(oid_int=0x42, serial_int=0xFF):
     return blob
 
 
-def _mock_image_data(content_type="image/jpeg", width=800, height=600):
+def _mock_image_data(
+    content_type="image/jpeg",
+    width=800,
+    height=600,
+    derivative=None,
+    source_ids=None,
+):
     data = MagicMock()
     data.contentType = content_type
     data._width = width
     data._height = height
     data.getImageSize.return_value = (width, height)
     data._blob = _mock_blob()
+    # Both attributes are set explicitly, and that is load-bearing.  getattr
+    # on a MagicMock auto-creates a child mock rather than returning the
+    # default, so source selection would find a Mock instead of None, u64()
+    # would be handed one, and roughly forty green tests would fail at once.
+    data._pgthumbor_source = derivative
+    data._pgthumbor_source_info = {"source_ids": source_ids} if source_ids else None
     return data
 
 
@@ -175,3 +187,64 @@ class TestConfigInterface:
         dc_fields = {f.name for f in fields(ThumborConfig)}
         for name in IThumborSettings.names():
             assert name in dc_fields, f"ThumborConfig missing field: {name}"
+
+
+class TestSubscriberRegistrations:
+    """The derivative subscribers are wired, and never for every object.
+
+    Parsing the ZCML is cheap and needs no Zope, but parsing alone would
+    happily accept a handler that does not exist — so the dotted names are
+    resolved here too.
+    """
+
+    @staticmethod
+    def _subscribers():
+        from pathlib import Path
+
+        import plone.pgthumbor
+        import xml.etree.ElementTree as ElementTree
+
+        zcml = Path(plone.pgthumbor.__file__).parent / "configure.zcml"
+        root = ElementTree.parse(zcml).getroot()
+        return root.findall("{http://namespaces.zope.org/zope}subscriber")
+
+    @staticmethod
+    def _normalise(value):
+        return " ".join(value.split())
+
+    def test_both_lifecycle_events_are_registered(self):
+        registrations = {
+            self._normalise(element.get("for")): element.get("handler")
+            for element in self._subscribers()
+        }
+
+        content = "plone.dexterity.interfaces.IDexterityContent"
+        added = "zope.lifecycleevent.interfaces.IObjectAddedEvent"
+        modified = "zope.lifecycleevent.interfaces.IObjectModifiedEvent"
+        handler = ".subscribers.generate_source_derivatives"
+
+        assert registrations[f"{content} {added}"] == handler
+        assert registrations[f"{content} {modified}"] == handler
+
+    def test_nothing_is_registered_for_every_object(self):
+        # z3c.autoinclude loads this package for the whole instance, so a
+        # "*" registration would fire in every site in the process,
+        # including ones that never installed the add-on.
+        for element in self._subscribers():
+            assert "*" not in element.get("for")
+
+    def test_the_handler_resolves(self):
+        from plone.pgthumbor.subscribers import generate_source_derivatives
+
+        handlers = {element.get("handler") for element in self._subscribers()}
+
+        assert handlers == {".subscribers.generate_source_derivatives"}
+        assert callable(generate_source_derivatives)
+
+    def test_the_registered_interfaces_resolve(self):
+        import importlib
+
+        for element in self._subscribers():
+            for dotted in self._normalise(element.get("for")).split():
+                module, name = dotted.rsplit(".", 1)
+                assert getattr(importlib.import_module(module), name) is not None

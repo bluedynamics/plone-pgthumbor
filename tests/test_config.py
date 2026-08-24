@@ -189,3 +189,142 @@ class TestThumborConfig:
             security_key="key",
         )
         assert cfg.server_url == "http://thumbor:8888"
+
+
+class TestSourceMaxEdge:
+    """PGTHUMBOR_SOURCE_MAX_EDGE — the derivative generation cap.
+
+    This setting is an integer whose meaningful value includes ``0``, so it
+    deliberately does *not* copy the falsiness-as-unset idiom the boolean
+    settings use.  ``0`` is the documented kill switch; reading it as "unset"
+    would let the registry silently switch generation back on during exactly
+    the bulk import or incident you reached for it in.
+    """
+
+    def _registry(self, monkeypatch, **settings):
+        from unittest.mock import MagicMock
+
+        mock_registry = MagicMock()
+        mock_settings = MagicMock()
+        mock_settings.smart_cropping = False
+        mock_settings.paranoid_mode = False
+        for name, value in settings.items():
+            setattr(mock_settings, name, value)
+        mock_registry.forInterface.return_value = mock_settings
+        monkeypatch.setattr(
+            "zope.component.queryUtility",
+            lambda iface: mock_registry,
+        )
+
+    def _env(self, monkeypatch, **kwargs):
+        env_override(
+            monkeypatch,
+            PGTHUMBOR_SERVER_URL="http://thumbor:8888",
+            PGTHUMBOR_SECURITY_KEY="key",
+            **kwargs,
+        )
+
+    def test_defaults_to_4000(self, monkeypatch):
+        from plone.pgthumbor.config import get_thumbor_config
+
+        self._env(monkeypatch)
+
+        assert get_thumbor_config().source_max_edge == 4000
+
+    def test_env_override(self, monkeypatch):
+        from plone.pgthumbor.config import get_thumbor_config
+
+        self._env(monkeypatch, PGTHUMBOR_SOURCE_MAX_EDGE="5000")
+
+        assert get_thumbor_config().source_max_edge == 5000
+
+    def test_env_zero_disables_and_the_registry_does_not_win(self, monkeypatch):
+        """The case the falsiness idiom gets wrong.
+
+        Reading ``"0"`` as unset would reach for the registry and come back
+        with 4000 — silently re-enabling the thing the operator just turned
+        off.
+        """
+        from plone.pgthumbor.config import get_thumbor_config
+
+        self._env(monkeypatch, PGTHUMBOR_SOURCE_MAX_EDGE="0")
+        self._registry(monkeypatch, source_max_edge=4000)
+
+        assert get_thumbor_config().source_max_edge == 0
+
+    def test_env_beats_registry(self, monkeypatch):
+        from plone.pgthumbor.config import get_thumbor_config
+
+        self._env(monkeypatch, PGTHUMBOR_SOURCE_MAX_EDGE="5000")
+        self._registry(monkeypatch, source_max_edge=2000)
+
+        assert get_thumbor_config().source_max_edge == 5000
+
+    def test_registry_fallback_when_env_absent(self, monkeypatch):
+        from plone.pgthumbor.config import get_thumbor_config
+
+        self._env(monkeypatch)
+        self._registry(monkeypatch, source_max_edge=6000)
+
+        assert get_thumbor_config().source_max_edge == 6000
+
+    def test_registry_zero_is_honoured(self, monkeypatch):
+        from plone.pgthumbor.config import get_thumbor_config
+
+        self._env(monkeypatch)
+        self._registry(monkeypatch, source_max_edge=0)
+
+        assert get_thumbor_config().source_max_edge == 0
+
+    def test_non_integer_env_falls_back_with_a_warning(self, monkeypatch, caplog):
+        from plone.pgthumbor.config import get_thumbor_config
+
+        import logging
+
+        self._env(monkeypatch, PGTHUMBOR_SOURCE_MAX_EDGE="not-a-number")
+
+        with caplog.at_level(logging.WARNING, logger="plone.pgthumbor.config"):
+            cfg = get_thumbor_config()
+
+        assert cfg.source_max_edge == 4000
+        assert "PGTHUMBOR_SOURCE_MAX_EDGE" in caplog.text
+
+    def test_negative_clamps_to_zero(self, monkeypatch):
+        from plone.pgthumbor.config import get_thumbor_config
+
+        self._env(monkeypatch, PGTHUMBOR_SOURCE_MAX_EDGE="-100")
+
+        assert get_thumbor_config().source_max_edge == 0
+
+    def test_env_above_the_ceiling_clamps(self, monkeypatch):
+        """The ceiling is load-bearing, not cosmetic.
+
+        An edge of 4000 bounds the derivative at 16 MP, well under Thumbor's
+        75 MP MAX_PIXELS.  That guarantee dies above sqrt(75e6) ~= 8660, so a
+        cap of 12000 would quietly reproduce the very 400 this feature exists
+        to remove.
+        """
+        from plone.pgthumbor.config import get_thumbor_config
+
+        self._env(monkeypatch, PGTHUMBOR_SOURCE_MAX_EDGE="12000")
+
+        assert get_thumbor_config().source_max_edge == 8000
+
+    def test_registry_above_the_ceiling_clamps(self, monkeypatch):
+        """A value written before the bound existed must not slip through.
+
+        The schema's max= only guards writes through the control panel; a
+        record already in the registry never revalidates.
+        """
+        from plone.pgthumbor.config import get_thumbor_config
+
+        self._env(monkeypatch)
+        self._registry(monkeypatch, source_max_edge=12000)
+
+        assert get_thumbor_config().source_max_edge == 8000
+
+    def test_derivative_cap_bounds_pixels_below_thumbor_max(self, monkeypatch):
+        """The arithmetic the whole design rests on, pinned as a test."""
+        from plone.pgthumbor.config import SOURCE_MAX_EDGE_CEILING
+
+        assert SOURCE_MAX_EDGE_CEILING**2 < 75_000_000

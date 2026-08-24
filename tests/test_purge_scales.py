@@ -8,6 +8,8 @@ from plone.pgthumbor.purge_scales import PurgeScalesView
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+import pytest
+
 
 def _make_brain(obj, path="/site/obj"):
     brain = MagicMock()
@@ -181,3 +183,66 @@ class TestPurgeScalesView:
         assert "2 skipped" in result
         assert "50 total" in result
         request.response.setHeader.assert_called_once_with("Content-Type", "text/plain")
+
+
+class TestMainRequestContext:
+    """Issue #16: the zconsole path had no browser layer.
+
+    This entry point reindexes image_scales for every object it walks, so
+    running it without a request does not merely miss the Thumbor URLs — it
+    overwrites the column with null site-wide.
+    """
+
+    def _args(self, site="Plone"):
+        args = MagicMock()
+        args.site = site
+        return args
+
+    def test_it_aborts_without_a_usable_request(self, monkeypatch):
+        from plone.pgthumbor import purge_scales as module
+        from plone.pgthumbor.zconsole import RequestContextError
+
+        purged = []
+        monkeypatch.setattr(module, "establish_request", lambda app: app)
+        monkeypatch.setattr(
+            module, "purge_scales", lambda portal: purged.append(portal)
+        )
+
+        with pytest.raises(RequestContextError):
+            module.main(MagicMock(), self._args())
+
+        # Nothing walked, nothing reindexed, nothing nulled.
+        assert purged == []
+
+    def test_it_establishes_the_request_before_checking(self, monkeypatch):
+        from plone.pgthumbor import purge_scales as module
+
+        order = []
+        monkeypatch.setattr(
+            module, "establish_request", lambda app: order.append("establish") or app
+        )
+        monkeypatch.setattr(
+            module,
+            "require_thumbor_request",
+            lambda: order.append("require"),
+        )
+        monkeypatch.setattr(
+            module, "purge_scales", lambda portal: order.append("purge") or (0, 0, 0, 0)
+        )
+        monkeypatch.setattr(
+            "AccessControl.SecurityManagement.newSecurityManager",
+            lambda *a: None,
+            raising=False,
+        )
+
+        # A real stub, not a MagicMock: MagicMock does not auto-create
+        # dunder-looking attributes, and Acquisition's __of__ is one.
+        class _User:
+            def __of__(self, container):
+                return self
+
+        app = MagicMock()
+        app.acl_users.getUserById.return_value = _User()
+        module.main(app, self._args())
+
+        assert order == ["establish", "require", "purge"]

@@ -15,6 +15,7 @@ titlesonly: true
 install
 configure-plone
 configure-thumbor
+choose-source-max-edge
 ```
 
 ## Deployment
@@ -47,6 +48,7 @@ maxdepth: 2
 titlesonly: true
 ---
 purge-legacy-scales
+backfill-source-derivatives
 ```
 
 ## Development

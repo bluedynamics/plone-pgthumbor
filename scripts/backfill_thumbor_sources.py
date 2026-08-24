@@ -31,7 +31,18 @@ Environment
 ``PGTHUMBOR_BACKFILL_PROGRESS``         progress file path
 ``PGTHUMBOR_BACKFILL_FORCE``            revisit terminal outcomes too
 ``PGTHUMBOR_BACKFILL_SIZE_ONLY``        only images above the cap (pass 1)
+``PGTHUMBOR_BACKFILL_DRY_RUN``          measure, write nothing
 ======================================  =====================================
+
+Measure before you run
+----------------------
+
+``PGTHUMBOR_BACKFILL_DRY_RUN=1`` writes nothing and prints the four numbers
+the cap is chosen from: how many candidates there are, what a derivative
+costs in bytes, how much of the population has its scale uids move when the
+derivative lands, and which scale names actually carry crops.  The last one
+is the binding constraint on the cap; the default of 4000 is a generic
+starting point, not a decision for any particular site.
 
 Why SQL and not the catalog
 ---------------------------
@@ -52,15 +63,66 @@ the path, so nothing heals them.  A chunk therefore counts as done only
 once *reindexed*, and the progress file tracks the two phases separately.
 """
 
+from collections import Counter
+from contextlib import contextmanager
 from pathlib import Path
+from plone.pgthumbor.derivative import build_derivative_bytes
 from plone.pgthumbor.derivative import INFO_ATTRIBUTE
 from plone.pgthumbor.derivative import IS_DERIVATIVE_ATTRIBUTE
+from plone.pgthumbor.derivative import set_source_derivative
 from plone.pgthumbor.derivative import TERMINAL_REASONS
+from ZODB.utils import p64
 
+import ctypes
+import gc
 import json
 import os
+import statistics
 import sys
 import traceback
+import transaction
+
+
+# --- memory ---------------------------------------------------------------
+#
+# Both helpers below are the ones from ``purge_legacy_scales.py``, verbatim.
+# They are duplicated rather than imported because that script is standalone
+# by design — it has to run on a site that has never had plone.pgthumbor
+# installed — and because a copied twenty lines is cheaper than making the
+# two scripts import each other under zconsole, where sys.path is whatever
+# the container happens to have.
+
+# glibc malloc_trim — releases freed heap memory back to the OS.
+# Without this, Python keeps freed memory in its internal arena allocator
+# and the RSS grows until OOM even though objects have been garbage collected.
+try:
+    _libc = ctypes.CDLL("libc.so.6")
+
+    def _release_memory():
+        gc.collect()
+        _libc.malloc_trim(0)
+
+except OSError:
+
+    def _release_memory():
+        gc.collect()
+
+
+def _invalidate_cache(conn):
+    """Invalidate ALL cached objects — removes ghosts from cache entirely.
+
+    cacheMinimize() only ghosts objects but keeps them in the cache dict.
+    Ghost objects still consume ~200 bytes each of Python heap.  After 20k+
+    objects, ghost accumulation causes OOM.  invalidate() truly removes
+    unreferenced objects from the cache, allowing Python (and malloc_trim)
+    to free the memory.
+    """
+    oids = [oid for oid, _ in conn._cache.items()]
+    for oid in oids:
+        try:
+            conn._cache.invalidate(oid)
+        except KeyError:
+            pass
 
 
 # --- what the work list is made of ----------------------------------------
@@ -86,14 +148,36 @@ OBJECT_STATE_CLASS_NAMES = ("NamedBlobImage",)
 # at the filename: an editorial upload that happened to be named
 # ``something-pgthumbor-source.jpg`` would otherwise be skipped for good,
 # with nothing in the log to say so.
-_CANDIDATE_SELECT = f"""\
-SELECT zoid
+_CANDIDATE_FROM = f"""\
 FROM object_state
 WHERE class_mod = %(class_mod)s
   AND class_name = ANY(%(class_names)s::text[])
   AND zoid > %(last_zoid)s
   AND NOT (state ? '{IS_DERIVATIVE_ATTRIBUTE}')
 """
+
+_CANDIDATE_SELECT = "SELECT zoid\n" + _CANDIDATE_FROM
+
+# ``_modified`` is what ``NamedBlobFile._setData`` writes, so a field value
+# without it predates the upload path that sets it.  On those, writing the
+# derivative moves ``_p_mtime`` — and every scale uid for that image with
+# it, because ``hash_key`` folds ``modified_time`` and
+# ``ModifiedPropertyMixin.modified`` falls back to ``_p_mtime`` when
+# ``_modified`` is absent.  Counting them is how the dry run sizes the
+# cache-invalidation blast radius before anything is written.
+MODIFIED_ATTRIBUTE = "_modified"
+
+# The dry run's first two numbers, over the whole population and in one
+# pass.  Counted in SQL rather than by loading field values: the number that
+# matters is the population's, not a sample's, and the attribute is a plain
+# JSONB key like the others this file reads.
+_CANDIDATE_SUMMARY = (
+    f"""\
+SELECT count(*) AS candidates,
+       count(*) FILTER (WHERE NOT (state ? '{MODIFIED_ATTRIBUTE}')) AS without_modified
+"""
+    + _CANDIDATE_FROM
+)
 
 # The candidate rule, mirroring ``derivative.needs_processing``:  no record
 # at all, a record that is not an outcome record, a *non-terminal* reason,
@@ -145,7 +229,55 @@ ORDER BY zoid
 LIMIT %(chunk)s
 """
 
+# --- how the crop histogram is read ---------------------------------------
+#
+# Crops live in an annotation on the *content object*, not on the field
+# value, so they cannot be reached the way phase 1 reaches an image — and
+# waking content objects to read them is the thing this whole script exists
+# to avoid.  They are read out of the stored state instead.
+#
+# ``zope.annotation``'s attribute annotations are an OOBTree, which
+# zodb-pgjsonb encodes as ``{"@kv": [[key, value], ...]}``.  The value under
+# the crop key is normally a reference to a persistent mapping of its own —
+# ``{"@ref": ["<zoid hex>", "<class>"]}`` — and occasionally a plain dict
+# stored inline.  Both shapes are handled; anything else is skipped.
+#
+# There is no index for this, so it is a sequential scan over object_state.
+# That is affordable exactly once, in a dry run, and nowhere else: the
+# ordinary run never issues it.
+#
+# The CASE is not decoration.  A LATERAL function in the FROM list is
+# evaluated before the WHERE clause, so a ``jsonb_typeof(...) = 'array'``
+# guard sitting in WHERE would not stop ``jsonb_array_elements`` from
+# raising on the first row whose ``@kv`` is not an array.  Feeding it an
+# empty array instead makes the guard part of the argument, where the
+# evaluation order is not in question.  (``state`` is nullable and the key
+# is absent on nearly every row; both yield NULL, and a strict
+# set-returning function on NULL simply produces no rows.)
+_CROP_ANNOTATION_SELECT = """\
+SELECT entry -> 1 AS crops
+FROM object_state,
+     LATERAL jsonb_array_elements(
+         CASE WHEN jsonb_typeof(state -> '@kv') = 'array'
+              THEN state -> '@kv'
+              ELSE '[]'::jsonb
+         END
+     ) AS entry
+WHERE entry ->> 0 = %(annotation_key)s
+"""
+
+_CROP_STORAGE_SELECT = """\
+SELECT state
+FROM object_state
+WHERE zoid = ANY(%(zoids)s::bigint[])
+"""
+
 DEFAULT_CHUNK_SIZE = 100
+
+# How many candidates the dry run decodes for the size estimate.  Small on
+# purpose: every one of them is a full decode of a print-resolution image,
+# and the number wanted out of it is a median, not a total.
+DEFAULT_SAMPLE_SIZE = 25
 DEFAULT_PROGRESS_PATH = "/tmp/pgthumbor-backfill-progress.json"
 
 PHASE_GENERATE = "generate"
@@ -153,6 +285,29 @@ PHASE_REINDEX = "reindex"
 PHASES = (PHASE_GENERATE, PHASE_REINDEX)
 
 _PROGRESS_VERSION = 1
+
+
+def _candidate_filters(max_edge, last_zoid, force, size_only, class_names):
+    """The predicates and parameters both candidate queries share.
+
+    Shared so the dry run's count cannot drift away from the population the
+    run actually walks.  A count over a slightly different predicate is
+    worse than no count at all: it still looks like a number.
+    """
+    sql = ""
+    params = {
+        "class_mod": OBJECT_STATE_CLASS_MOD,
+        "class_names": list(class_names),
+        "last_zoid": last_zoid,
+    }
+    if not force:
+        sql += _NOT_TERMINAL
+        params["terminal_reasons"] = sorted(TERMINAL_REASONS)
+        params["max_edge"] = max_edge
+    if size_only:
+        sql += _OVERSIZED
+        params["max_edge"] = max_edge
+    return sql, params
 
 
 def candidate_query(
@@ -169,21 +324,26 @@ def candidate_query(
     was actually assembled, so ``force`` really does drop the outcome
     predicate rather than merely widening it.
     """
-    sql = _CANDIDATE_SELECT
-    params = {
-        "class_mod": OBJECT_STATE_CLASS_MOD,
-        "class_names": list(class_names),
-        "last_zoid": last_zoid,
-        "chunk": chunk,
-    }
-    if not force:
-        sql += _NOT_TERMINAL
-        params["terminal_reasons"] = sorted(TERMINAL_REASONS)
-        params["max_edge"] = max_edge
-    if size_only:
-        sql += _OVERSIZED
-        params["max_edge"] = max_edge
-    return sql + _CANDIDATE_TAIL, params
+    filters, params = _candidate_filters(
+        max_edge, last_zoid, force, size_only, class_names
+    )
+    params["chunk"] = chunk
+    return _CANDIDATE_SELECT + filters + _CANDIDATE_TAIL, params
+
+
+def candidate_summary_query(
+    max_edge,
+    force=False,
+    size_only=False,
+    class_names=OBJECT_STATE_CLASS_NAMES,
+):
+    """Build the dry run's counting query and its parameters.
+
+    No keyset and no LIMIT: this counts the whole population, including
+    whatever a resumed run has already passed.
+    """
+    filters, params = _candidate_filters(max_edge, 0, force, size_only, class_names)
+    return _CANDIDATE_SUMMARY + filters, params
 
 
 def select_candidates(
@@ -203,6 +363,17 @@ def select_candidates(
     # connection and pgcatalog's pool — build psycopg connections with the
     # ``dict_row`` factory.
     return [row["zoid"] for row in cursor.fetchall()]
+
+
+def candidate_summary(cursor, max_edge, force=False, size_only=False):
+    """Count the candidates, and how many of them have no ``_modified``."""
+    sql, params = candidate_summary_query(max_edge, force=force, size_only=size_only)
+    cursor.execute(sql, params)
+    row = cursor.fetchall()[0]
+    return {
+        "candidates": int(row["candidates"] or 0),
+        "without_modified": int(row["without_modified"] or 0),
+    }
 
 
 class Progress:
@@ -382,17 +553,413 @@ def resolve_portal(app, site_id):
     return portal
 
 
-def run(portal, max_edge, progress, chunk, force=False, size_only=False):
-    """Run phase 1 and then phase 2.
+# --- phase 1: generate -----------------------------------------------------
 
-    Not implemented yet, and loudly so: the two runners are the next two
-    tasks of the source-derivative plan.  Everything they need — the
-    candidate query, the resumable per-phase cursor, the site and the cap
-    — is above.
+
+@contextmanager
+def work_list_cursor(portal):
+    """A psycopg cursor for the work list, on a connection of its own.
+
+    Deliberately *not* ``get_storage_connection()``, which is what the
+    request path uses.  That connection is the one zodb-pgjsonb runs its
+    ``BEGIN ISOLATION LEVEL REPEATABLE READ`` on, and a SELECT issued on it
+    between two ZODB transactions opens an implicit transaction first,
+    which silently downgrades the next snapshot.  One extra pooled
+    connection, held for the lifetime of a dedicated backfill pod, is the
+    cheaper trade.
+
+    Autocommit, because the walk runs for hours.  A single snapshot held
+    open that long pins the dead tuples in ``object_state`` — the table
+    every chunk writes to — and would also hide the derivatives the
+    previous chunks just committed.
+
+    Borrowed and given back.  Returning it matters more than it looks:
+    ``psycopg_pool`` rolls back an open transaction on ``putconn`` but does
+    **not** restore ``autocommit``, so handing this connection back as-is
+    would leave the next borrower in autocommit without knowing it.  The
+    flag is reset before the connection goes home.
     """
-    raise NotImplementedError(
-        "phase 1 (generate) and phase 2 (reindex) are not implemented yet"
+    from plone.pgcatalog.pool import get_pool
+
+    pool = get_pool(portal)
+    connection = pool.getconn()
+    connection.autocommit = True
+    try:
+        with connection.cursor() as cursor:
+            yield cursor
+    finally:
+        connection.autocommit = False
+        pool.putconn(connection)
+
+
+def load_field_value(connection, zoid):
+    """Load one ``NamedBlobImage`` by oid, without waking its owner.
+
+    This is the whole reason phase 1 is memory-light.  A ``NamedBlobImage``
+    is a row in ``object_state`` with a zoid of its own, so it can be
+    fetched on its own: the content object that holds it, its annotations,
+    its scales and its catalog entry all stay untouched.  Walking content
+    objects instead is what OOM-killed a production container during the
+    original scan.
+    """
+    return connection.get(p64(zoid))
+
+
+def run_generate(
+    connection, cursor, max_edge, progress, chunk, force=False, size_only=False
+):
+    """Write derivatives, one committed chunk at a time.
+
+    Takes the ZODB connection rather than the portal, because phase 1
+    genuinely needs nothing else: no site, no request, no catalog.  Phase 2
+    is the one that needs all three.
+    """
+    written = 0
+    failed = 0
+    while True:
+        zoids = select_candidates(
+            cursor,
+            max_edge,
+            last_zoid=progress.last_zoid(PHASE_GENERATE),
+            chunk=chunk,
+            force=force,
+            size_only=size_only,
+        )
+        if not zoids:
+            # The termination criterion: nothing left above the cursor.
+            break
+
+        for zoid in zoids:
+            try:
+                image = load_field_value(connection, zoid)
+                # force is passed through, not re-derived: without it a
+                # forced run widens the SQL population and then skips every
+                # extra row it selected — a full table read that writes
+                # nothing.
+                if set_source_derivative(image, max_edge=max_edge, force=force):
+                    written += 1
+                # A no-op on the ones just modified, which the cache
+                # invalidation below ghosts instead; it is what frees the
+                # ones that turned out to need nothing.
+                image._p_deactivate()
+            except Exception:
+                # One unreadable blob must not end a run of tens of
+                # thousands.  The traceback is printed and the object is
+                # left a candidate: it has no outcome record, so the next
+                # run selects it again.
+                failed += 1
+                print(f"FAILED zoid={zoid}", flush=True)
+                traceback.print_exc()
+
+        # Commit first, record second.  The other order loses work: a pod
+        # killed between the two would resume past objects whose
+        # derivatives were never committed, and nothing would select them
+        # again.  Re-running a committed chunk is a no-op instead — the
+        # outcome record makes it one.
+        transaction.commit()
+        # The cursor advances past failures too, deliberately.  Otherwise
+        # one permanently broken blob makes the run select, fail and
+        # re-select the same chunk for as long as the pod lives.
+        progress.record_chunk(PHASE_GENERATE, last_zoid=zoids[-1], objects=len(zoids))
+
+        _invalidate_cache(connection)
+        _release_memory()
+
+        print(
+            f"{PHASE_GENERATE}: {progress.objects(PHASE_GENERATE)} objects, "
+            f"{written} written, {failed} failed, cursor at {zoids[-1]}",
+            flush=True,
+        )
+
+    return {
+        "chunks": progress.chunks(PHASE_GENERATE),
+        "objects": progress.objects(PHASE_GENERATE),
+        "written": written,
+        "failed": failed,
+    }
+
+
+# --- the dry run -----------------------------------------------------------
+
+
+def _known_scale_names():
+    """Registered scale names, longest first, or nothing.
+
+    Used only to split ``{fieldname}_{scalename}`` crop keys, which are
+    ambiguous on their own — both halves may contain an underscore.  A
+    registered name resolves it; without a registry (no site, no Plone)
+    the histogram falls back to the last segment.
+    """
+    try:
+        from plone.pgthumbor.uid_healing import registered_scales
+
+        names = {name for name, _width, _height in registered_scales()}
+    except Exception:
+        return ()
+    return tuple(sorted(names, key=len, reverse=True))
+
+
+def _scale_name(key, scale_names):
+    """The scale half of a ``{fieldname}_{scalename}`` crop key."""
+    for name in scale_names:
+        if key.endswith(f"_{name}"):
+            return name
+    _fieldname, separator, scale = key.rpartition("_")
+    return scale if separator else None
+
+
+def _crop_keys(state):
+    """Every crop key in one stored mapping, whatever shape it has."""
+    if not isinstance(state, dict):
+        return []
+    data = state.get("data")
+    if isinstance(data, dict):
+        # PersistentMapping / PersistentDict.
+        return [key for key in data if isinstance(key, str)]
+    pairs = state.get("@kv")
+    if isinstance(pairs, list):
+        # A BTree, if a deployment stored one here.
+        return [
+            pair[0]
+            for pair in pairs
+            if isinstance(pair, list) and pair and isinstance(pair[0], str)
+        ]
+    # Stored inline as a plain dict: the crop keys are the state.  The "@"
+    # keys are the codec's own markers, never crop names.
+    return [key for key in state if isinstance(key, str) and not key.startswith("@")]
+
+
+def crop_histogram(cursor, scale_names=None):
+    """How many crops each scale name carries, across the whole site.
+
+    This is the binding *S* in the design's ``X >= S / cap`` threshold, and
+    therefore the entire input to choosing a cap: a scale that carries no
+    crop puts no floor on anything.
+
+    Never fatal.  ``plone.app.imagecropping`` may not be installed at all,
+    and the stored shapes it leaves behind are not this script's contract —
+    an empty histogram costs the operator one of four numbers, while an
+    exception costs them the other three as well.
+    """
+    if scale_names is None:
+        scale_names = _known_scale_names()
+    try:
+        # The key comes from the adapter that reads these crops at request
+        # time, so the dry run and the renderer cannot look in two
+        # different places.  Imported inside the guard: everything about
+        # this number is optional, including its import.
+        from plone.pgthumbor.addons_compat.imagecropping import ANNOTATION_KEY
+
+        cursor.execute(_CROP_ANNOTATION_SELECT, {"annotation_key": ANNOTATION_KEY})
+        rows = cursor.fetchall()
+
+        states = []
+        references = set()
+        for row in rows:
+            crops = row["crops"]
+            if not isinstance(crops, dict):
+                continue
+            reference = crops.get("@ref")
+            if isinstance(reference, list) and reference:
+                # ``["17db849812c6bd21", "<class>"]`` — the zoid is hex.
+                references.add(int(reference[0], 16))
+            else:
+                states.append(crops)
+
+        if references:
+            cursor.execute(_CROP_STORAGE_SELECT, {"zoids": sorted(references)})
+            states.extend(row["state"] for row in cursor.fetchall())
+    except Exception:
+        print("Crop histogram unavailable:", flush=True)
+        traceback.print_exc()
+        return {}
+
+    counts = Counter()
+    for state in states:
+        for key in _crop_keys(state):
+            name = _scale_name(key, scale_names)
+            if name:
+                counts[name] += 1
+    return dict(counts.most_common())
+
+
+def sample_derivative_sizes(
+    cursor,
+    connection,
+    max_edge,
+    sample=DEFAULT_SAMPLE_SIZE,
+    force=False,
+    size_only=False,
+):
+    """Encoded derivative sizes for the first *sample* candidates.
+
+    The first by zoid, not a random draw: a random sample needs a full scan
+    of the filtered set, and the keyset walk is already there.  The bias is
+    real — low zoids are old content — and the report says so rather than
+    hiding it behind the word "sample".
+
+    Nothing is written.  ``build_derivative_bytes`` is the same encoder the
+    run uses, called directly, so the number is bytes that would really
+    land in blob storage rather than an estimate of them.
+    """
+    zoids = select_candidates(
+        cursor, max_edge, last_zoid=0, chunk=sample, force=force, size_only=size_only
     )
+    sizes = []
+    for zoid in zoids:
+        try:
+            image = load_field_value(connection, zoid)
+            with image.open("r") as stream:
+                built = build_derivative_bytes(stream, max_edge)
+            if built is not None:
+                # None means no trigger fired — nothing would be written
+                # for this one, so it contributes no storage either.
+                sizes.append(len(built[0]))
+            image._p_deactivate()
+        except Exception:
+            print(f"Sample failed for zoid={zoid}", flush=True)
+            traceback.print_exc()
+    return sizes
+
+
+def dry_run_report(
+    cursor,
+    connection,
+    max_edge,
+    force=False,
+    size_only=False,
+    sample=DEFAULT_SAMPLE_SIZE,
+):
+    """Measure the work without doing any of it."""
+    try:
+        summary = candidate_summary(cursor, max_edge, force=force, size_only=size_only)
+        sizes = sample_derivative_sizes(
+            cursor,
+            connection,
+            max_edge,
+            sample=sample,
+            force=force,
+            size_only=size_only,
+        )
+        crops = crop_histogram(cursor)
+    finally:
+        # Reading a blob joins the transaction.  Aborting keeps "the dry
+        # run writes nothing" true by construction rather than by argument.
+        transaction.abort()
+
+    return {
+        "max_edge": max_edge,
+        "sample_size": sample,
+        "candidates": summary["candidates"],
+        "without_modified": summary["without_modified"],
+        "median_bytes": int(statistics.median(sizes)) if sizes else None,
+        "sampled": len(sizes),
+        "crops": crops,
+    }
+
+
+def print_dry_run_report(report):
+    """The four numbers, and what each one is for."""
+    print("", flush=True)
+    print(f"DRY RUN at cap {report['max_edge']}px — nothing was written.", flush=True)
+    print(f"  candidates:        {report['candidates']}", flush=True)
+    median = report["median_bytes"]
+    print(
+        "  median derivative: "
+        + (f"{median} bytes" if median is not None else "no sample produced one")
+        + f" (from {report['sampled']} of the first {report['sample_size']} by zoid)",
+        flush=True,
+    )
+    print(
+        f"  uids that will move: {report['without_modified']} "
+        f"(candidates with no {MODIFIED_ATTRIBUTE}; every scale uid for "
+        "those images changes when the derivative is written)",
+        flush=True,
+    )
+    if report["crops"]:
+        print("  scales carrying crops:", flush=True)
+        for name, count in report["crops"].items():
+            print(f"    {name}: {count}", flush=True)
+    else:
+        print("  scales carrying crops: none found", flush=True)
+    print("", flush=True)
+
+
+# --- the run ---------------------------------------------------------------
+
+
+def run(
+    portal,
+    max_edge,
+    progress,
+    chunk,
+    force=False,
+    size_only=False,
+    dry_run=False,
+    cursor=None,
+):
+    """Measure, or run phase 1.
+
+    *cursor* is injectable so the runners can be exercised without a
+    database; left alone it is borrowed from the pool for the duration.
+    """
+    if cursor is None:
+        with work_list_cursor(portal) as borrowed:
+            return run(
+                portal,
+                max_edge,
+                progress,
+                chunk,
+                force=force,
+                size_only=size_only,
+                dry_run=dry_run,
+                cursor=borrowed,
+            )
+    connection = portal._p_jar
+
+    if dry_run:
+        report = dry_run_report(
+            cursor, connection, max_edge, force=force, size_only=size_only
+        )
+        print_dry_run_report(report)
+        return report
+
+    stats = run_generate(
+        connection,
+        cursor,
+        max_edge=max_edge,
+        progress=progress,
+        chunk=chunk,
+        force=force,
+        size_only=size_only,
+    )
+    print(
+        f"{PHASE_GENERATE} finished: {stats['objects']} objects in "
+        f"{stats['chunks']} chunks, {stats['written']} derivatives written, "
+        f"{stats['failed']} failed.",
+        flush=True,
+    )
+
+    # --- phase 2 seam -----------------------------------------------------
+    #
+    # The reindex is a separate task and is not implemented here.  Until it
+    # is, this run has NOT finished the job, and says so: for exactly the
+    # images phase 1 just fixed, the catalog still holds direct, signed
+    # Thumbor URLs pointing at the originals, and a browser fetches those
+    # without Plone in the path.  Nothing heals them.
+    #
+    # Phase 2 also needs what phase 1 did not: a site, and a request
+    # carrying the browser layer — without one the reindex overwrites
+    # image_scales with null for every object it touches.
+    if progress.reindex_pending:
+        print(
+            f"NOT FINISHED: {PHASE_REINDEX} has not run "
+            f"(at {progress.last_zoid(PHASE_REINDEX)}, behind {PHASE_GENERATE} "
+            f"at {progress.last_zoid(PHASE_GENERATE)}). The catalog still "
+            "points at the originals for every image this run touched.",
+            flush=True,
+        )
+    return stats
 
 
 def main(app):
@@ -407,6 +974,7 @@ def main(app):
     portal = resolve_portal(app, site_id)
     max_edge = resolve_max_edge()
     progress = Progress.load(progress_path())
+    dry_run = env_flag("PGTHUMBOR_BACKFILL_DRY_RUN")
 
     print(
         f"Site {site_id}: cap {max_edge}px, chunk {chunk_size()}, "
@@ -418,6 +986,11 @@ def main(app):
         f"{PHASE_REINDEX}={progress.last_zoid(PHASE_REINDEX)}",
         flush=True,
     )
+    if dry_run:
+        # Said before the work rather than only after it: the crop
+        # histogram is a sequential scan and the sample is a decode per
+        # image, so this can sit silent for minutes.
+        print("DRY RUN: measuring only, nothing will be written.", flush=True)
 
     run(
         portal,
@@ -426,6 +999,7 @@ def main(app):
         chunk=chunk_size(),
         force=env_flag("PGTHUMBOR_BACKFILL_FORCE"),
         size_only=env_flag("PGTHUMBOR_BACKFILL_SIZE_ONLY"),
+        dry_run=dry_run,
     )
 
 

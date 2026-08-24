@@ -15,12 +15,14 @@ psycopg's contract these functions depend on.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import ast
 import functools
 import importlib.util
 import json
 import pytest
+import statistics
 
 
 @functools.cache
@@ -77,6 +79,194 @@ def _select(rows=(), **kwargs):
     cursor = _FakeCursor(rows)
     zoids = backfill.select_candidates(cursor, **kwargs)
     return cursor, zoids
+
+
+# --- fakes for the runners -------------------------------------------------
+#
+# Still no database and no Zope: a run is a cursor, a ZODB connection and a
+# transaction manager, and all three are small enough to fake honestly.
+
+
+class _RunnerCursor:
+    """A fake cursor answering every query one run asks.
+
+    Dispatch is on what the SQL asks for, not on call order.  A dry run
+    interleaves the candidate walk with the summary and the two crop
+    queries, and a positional script would freeze whichever order the
+    implementation happens to use today.
+    """
+
+    def __init__(self, chunks=(), summary=None, annotations=(), storages=()):
+        self.chunks = [list(chunk) for chunk in chunks]
+        self.summary = dict(summary or {"candidates": 0, "without_modified": 0})
+        self.annotations = [dict(row) for row in annotations]
+        self.storages = [dict(row) for row in storages]
+        self.calls = []
+        self._rows = []
+
+    def execute(self, sql, params=None):
+        self.calls.append((sql, params))
+        text = " ".join(sql.split())
+        if "count(*)" in text:
+            self._rows = [dict(self.summary)]
+        elif "jsonb_array_elements" in text:
+            self._rows = list(self.annotations)
+        elif "zoid = ANY" in text:
+            self._rows = list(self.storages)
+        else:
+            chunk = self.chunks.pop(0) if self.chunks else []
+            self._rows = [{"zoid": zoid} for zoid in chunk]
+        return self
+
+    def fetchall(self):
+        return list(self._rows)
+
+    @property
+    def walk(self):
+        """Only the candidate-walk calls, in order."""
+        return [call for call in self.calls if "SELECT zoid" in call[0]]
+
+
+class _RaisingCursor:
+    """A cursor that refuses every query, the way an older schema would."""
+
+    def execute(self, sql, params=None):
+        raise RuntimeError("no such column")
+
+    def fetchall(self):  # pragma: no cover - never reached
+        raise RuntimeError("no such column")
+
+
+class _FakeCache:
+    """The two methods ``_invalidate_cache`` uses on a ZODB cache."""
+
+    def __init__(self, oids=(b"\x00" * 7 + b"\x01",)):
+        self.oids = list(oids)
+        self.invalidated = []
+
+    def items(self):
+        return [(oid, object()) for oid in self.oids]
+
+    def invalidate(self, oid):
+        self.invalidated.append(oid)
+
+
+class _FakeImage:
+    """A field value that records what a run did to it."""
+
+    def __init__(self, zoid, payload=b""):
+        self.zoid = zoid
+        self.payload = payload
+        self.deactivated = 0
+
+    def open(self, mode="r"):
+        import io
+
+        return io.BytesIO(self.payload)
+
+    def _p_deactivate(self):
+        self.deactivated += 1
+
+
+class _FakeConnection:
+    """The whole of the ZODB ``Connection`` surface a run uses.
+
+    ``get(p64(zoid))`` and a cache, and nothing else.  No traversal, no
+    catalog, no content object — which is exactly the property that keeps
+    phase 1 memory-light, so the fake would break loudly if that changed.
+    """
+
+    def __init__(self, payloads=None, unreadable=()):
+        self.payloads = dict(payloads or {})
+        self.unreadable = set(unreadable)
+        self.loaded = []
+        self.images = {}
+        self._cache = _FakeCache()
+
+    def get(self, oid):
+        from ZODB.utils import u64
+
+        zoid = u64(oid)
+        self.loaded.append(zoid)
+        if zoid in self.unreadable:
+            raise RuntimeError(f"blob {zoid} cannot be read")
+        image = self.images.get(zoid)
+        if image is None:
+            image = _FakeImage(zoid, self.payloads.get(zoid, b""))
+            self.images[zoid] = image
+        return image
+
+
+class _FakeTransaction:
+    """A transaction manager that only remembers what it was asked to do."""
+
+    def __init__(self):
+        self.events = []
+
+    @property
+    def commits(self):
+        return self.events.count("commit")
+
+    @property
+    def aborts(self):
+        return self.events.count("abort")
+
+    def commit(self):
+        self.events.append("commit")
+
+    def abort(self):
+        self.events.append("abort")
+
+
+def _generate(
+    monkeypatch,
+    tmp_path,
+    chunks,
+    *,
+    max_edge=4000,
+    chunk=2,
+    force=False,
+    generator=None,
+    connection=None,
+    progress=None,
+):
+    """Run phase 1 over *chunks* and hand back everything it touched."""
+    backfill = _backfill()
+    transaction = _FakeTransaction()
+    monkeypatch.setattr(backfill, "transaction", transaction)
+
+    generated = []
+
+    def default_generator(image, max_edge=None, force=False):
+        generated.append((image.zoid, max_edge, force))
+        return True
+
+    monkeypatch.setattr(
+        backfill, "set_source_derivative", generator or default_generator
+    )
+
+    cursor = _RunnerCursor(chunks=chunks)
+    connection = connection if connection is not None else _FakeConnection()
+    progress = (
+        progress if progress is not None else backfill.Progress(tmp_path / "p.json")
+    )
+    stats = backfill.run_generate(
+        connection,
+        cursor,
+        max_edge=max_edge,
+        progress=progress,
+        chunk=chunk,
+        force=force,
+    )
+    return SimpleNamespace(
+        backfill=backfill,
+        stats=stats,
+        cursor=cursor,
+        connection=connection,
+        progress=progress,
+        transaction=transaction,
+        generated=generated,
+    )
 
 
 class TestModuleBootstrap:
@@ -588,3 +778,666 @@ class TestRuntimeSettings:
 
         monkeypatch.delenv("PGTHUMBOR_BACKFILL_FORCE")
         assert backfill.env_flag("PGTHUMBOR_BACKFILL_FORCE") is False
+
+
+class TestPhaseOneLoadsFieldValuesDirectly:
+    """The content object is never woken, on any path.
+
+    A ``zconsole`` brain walk over the result set OOM-killed a production
+    container during the original scan.  Phase 1 exists in its current
+    shape because a ``NamedBlobImage`` is a row in ``object_state`` with
+    its own zoid, so it can be fetched on its own — the owner, its
+    annotations and its scales all stay ghosts.
+    """
+
+    def test_a_field_value_is_fetched_by_oid(self):
+        from ZODB.utils import p64
+
+        backfill = _backfill()
+        connection = _FakeConnection()
+
+        image = backfill.load_field_value(connection, 4711)
+
+        assert image.zoid == 4711
+        assert connection.loaded == [4711]
+        # p64, not the raw int: ZODB oids are eight bytes.
+        assert p64(4711) == p64(image.zoid)
+
+    def test_the_run_fetches_nothing_but_its_candidates(self, monkeypatch, tmp_path):
+        run = _generate(monkeypatch, tmp_path, chunks=[[3, 9], []])
+
+        assert run.connection.loaded == [3, 9]
+
+    def test_no_content_object_is_reachable_from_the_script_at_all(self):
+        # Structural, not incidental: the OOM came from walking content
+        # objects, so the names that would do it must not appear.  Read off
+        # the AST rather than the text, so a comment explaining *why* the
+        # script does not traverse is not itself a violation.
+        backfill = _backfill()
+        tree = ast.parse(Path(backfill.__file__).read_text())
+        used = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+        used |= {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+
+        assert used.isdisjoint(
+            {
+                "unrestrictedTraverse",
+                "getObject",
+                "portal_catalog",
+                "objectValues",
+                "getPhysicalPath",
+            }
+        )
+
+    def test_every_field_value_is_deactivated_again(self, monkeypatch, tmp_path):
+        run = _generate(monkeypatch, tmp_path, chunks=[[3, 9], []])
+
+        # Deactivation is a no-op on the ones just modified — they are
+        # ghosted by the cache invalidation after the commit instead — but
+        # it is the only thing that frees the untouched ones before then.
+        assert [image.deactivated for image in run.connection.images.values()] == [1, 1]
+
+
+class TestPhaseOneRunner:
+    """Every candidate is processed, and the chunk commits before it counts."""
+
+    def test_every_candidate_in_the_chunk_reaches_the_generator(
+        self, monkeypatch, tmp_path
+    ):
+        run = _generate(monkeypatch, tmp_path, chunks=[[3, 9], []])
+
+        assert [zoid for zoid, _, _ in run.generated] == [3, 9]
+
+    def test_the_generator_is_the_one_the_subscriber_uses(self):
+        from plone.pgthumbor.derivative import set_source_derivative
+
+        backfill = _backfill()
+
+        # Not a re-implementation of the trigger rules in the script: the
+        # backfill and the subscriber have to make the same decision about
+        # the same image, or the run never terminates.
+        assert backfill.set_source_derivative is set_source_derivative
+
+    def test_the_configured_cap_reaches_the_generator(self, monkeypatch, tmp_path):
+        run = _generate(monkeypatch, tmp_path, chunks=[[3], []], max_edge=5000)
+
+        assert run.generated == [(3, 5000, False)]
+
+    def test_force_reaches_the_generator_too(self, monkeypatch, tmp_path):
+        # Without this, ``force`` widens the SQL population and then the
+        # generator skips every extra row it selected: a run that reads the
+        # whole table and writes nothing.
+        run = _generate(monkeypatch, tmp_path, chunks=[[3], []], force=True)
+
+        assert run.generated == [(3, 4000, True)]
+
+    def test_one_commit_per_chunk(self, monkeypatch, tmp_path):
+        run = _generate(monkeypatch, tmp_path, chunks=[[3, 9], [12, 15], []], chunk=2)
+
+        assert run.transaction.commits == 2
+
+    def test_the_chunk_commits_before_the_cursor_advances(self, monkeypatch, tmp_path):
+        backfill = _backfill()
+        progress = backfill.Progress(tmp_path / "p.json")
+        transaction_events = []
+        original = progress.record_chunk
+
+        def record(*args, **kwargs):
+            transaction_events.append("record")
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(progress, "record_chunk", record)
+        run = _generate(monkeypatch, tmp_path, chunks=[[3], []], progress=progress)
+        run.transaction.events.extend(transaction_events)
+
+        # The other order loses work: a pod killed between the two would
+        # resume past objects whose derivatives were never committed, and
+        # nothing would ever select them again.
+        assert run.transaction.events == ["commit", "record"]
+
+    def test_the_keyset_advances_to_the_last_zoid_of_the_chunk(
+        self, monkeypatch, tmp_path
+    ):
+        run = _generate(monkeypatch, tmp_path, chunks=[[3, 9], [12, 15], []], chunk=2)
+
+        assert [params["last_zoid"] for _, params in run.cursor.walk] == [0, 9, 15]
+        assert run.progress.last_zoid(run.backfill.PHASE_GENERATE) == 15
+
+    def test_it_resumes_from_the_persisted_cursor(self, monkeypatch, tmp_path):
+        backfill = _backfill()
+        progress = backfill.Progress(tmp_path / "p.json")
+        progress.record_chunk(backfill.PHASE_GENERATE, last_zoid=400)
+
+        run = _generate(monkeypatch, tmp_path, chunks=[[]], progress=progress)
+
+        assert run.cursor.walk[0][1]["last_zoid"] == 400
+
+    def test_it_stops_when_no_candidates_remain(self, monkeypatch, tmp_path):
+        run = _generate(monkeypatch, tmp_path, chunks=[[3], []])
+
+        # One walk for the chunk, one for the empty answer that ends it.
+        assert len(run.cursor.walk) == 2
+        assert run.stats["chunks"] == 1
+        assert run.stats["objects"] == 1
+
+    def test_an_empty_population_does_no_work_at_all(self, monkeypatch, tmp_path):
+        run = _generate(monkeypatch, tmp_path, chunks=[[]])
+
+        assert run.transaction.commits == 0
+        assert run.progress.chunks(run.backfill.PHASE_GENERATE) == 0
+
+    def test_the_counters_separate_what_was_written_from_what_was_not(
+        self, monkeypatch, tmp_path
+    ):
+        def generator(image, max_edge=None, force=False):
+            # False is the ordinary "no derivative needed" answer, and it
+            # still leaves an outcome record behind.
+            return image.zoid == 3
+
+        run = _generate(monkeypatch, tmp_path, chunks=[[3, 9], []], generator=generator)
+
+        assert run.stats["written"] == 1
+        assert run.stats["objects"] == 2
+        assert run.stats["failed"] == 0
+
+
+class TestPhaseOneSurvivesOneBadObject:
+    """One unreadable blob must not end a run of tens of thousands."""
+
+    def test_a_failing_object_is_skipped_and_the_rest_proceed(
+        self, monkeypatch, tmp_path
+    ):
+        def generator(image, max_edge=None, force=False):
+            if image.zoid == 9:
+                raise RuntimeError("this one is broken")
+            return True
+
+        run = _generate(
+            monkeypatch, tmp_path, chunks=[[3, 9, 12], []], chunk=3, generator=generator
+        )
+
+        assert run.stats["failed"] == 1
+        assert run.stats["written"] == 2
+
+    def test_an_unloadable_oid_is_skipped_too(self, monkeypatch, tmp_path):
+        connection = _FakeConnection(unreadable={9})
+
+        run = _generate(
+            monkeypatch,
+            tmp_path,
+            chunks=[[3, 9, 12], []],
+            chunk=3,
+            connection=connection,
+        )
+
+        # A POSKeyError from a missing blob record is the realistic case,
+        # and it arrives from ``get`` rather than from the generator.
+        assert run.stats["failed"] == 1
+        assert [zoid for zoid, _, _ in run.generated] == [3, 12]
+
+    def test_a_failing_object_still_advances_the_cursor(self, monkeypatch, tmp_path):
+        def generator(image, max_edge=None, force=False):
+            raise RuntimeError("all of them are broken")
+
+        run = _generate(monkeypatch, tmp_path, chunks=[[3, 9], []], generator=generator)
+
+        # Otherwise the run never terminates: the same chunk is selected,
+        # fails, and is selected again for as long as the pod lives.
+        assert run.progress.last_zoid(run.backfill.PHASE_GENERATE) == 9
+        assert run.transaction.commits == 1
+
+
+class TestPhaseOneReleasesMemory:
+    """Ghosts accumulate; a chunk boundary is where they get dropped."""
+
+    def test_the_zodb_cache_is_invalidated_after_every_chunk(
+        self, monkeypatch, tmp_path
+    ):
+        run = _generate(monkeypatch, tmp_path, chunks=[[3], [9], []])
+
+        # cacheMinimize() only ghosts objects and keeps them in the cache
+        # dict; ~200 bytes per ghost is what OOM-killed the purge run.
+        assert len(run.connection._cache.invalidated) == 2
+
+    def test_freed_memory_is_returned_to_the_os_after_every_chunk(
+        self, monkeypatch, tmp_path
+    ):
+        backfill = _backfill()
+        calls = []
+        monkeypatch.setattr(backfill, "_release_memory", lambda: calls.append(1))
+
+        _generate(monkeypatch, tmp_path, chunks=[[3], [9], []])
+
+        # Without malloc_trim the arena keeps the freed blocks and RSS
+        # grows until the pod is killed, garbage collection notwithstanding.
+        assert len(calls) == 2
+
+    def test_the_memory_helpers_are_the_ones_from_the_purge_script(self):
+        import inspect
+
+        backfill = _backfill()
+        purge_source = (
+            Path(backfill.__file__).parent / "purge_legacy_scales.py"
+        ).read_text()
+
+        assert inspect.getsource(backfill._invalidate_cache) in purge_source
+        assert "malloc_trim" in Path(backfill.__file__).read_text()
+
+
+class TestDryRunWritesNothing:
+    """A dry run is the measurement that precedes the decision."""
+
+    def test_it_never_calls_the_generator(self, monkeypatch, tmp_path):
+        backfill = _backfill()
+        transaction = _FakeTransaction()
+        monkeypatch.setattr(backfill, "transaction", transaction)
+        calls = []
+        monkeypatch.setattr(
+            backfill,
+            "set_source_derivative",
+            lambda *args, **kwargs: calls.append(args),
+        )
+        cursor = _RunnerCursor(
+            chunks=[[]], summary={"candidates": 0, "without_modified": 0}
+        )
+
+        backfill.dry_run_report(cursor, _FakeConnection(), max_edge=4000)
+
+        assert calls == []
+
+    def test_it_commits_nothing_and_abandons_what_it_read(self, monkeypatch, tmp_path):
+        from tests.conftest import big_jpeg_bytes
+
+        backfill = _backfill()
+        transaction = _FakeTransaction()
+        monkeypatch.setattr(backfill, "transaction", transaction)
+        cursor = _RunnerCursor(chunks=[[3]])
+
+        backfill.dry_run_report(
+            cursor, _FakeConnection(payloads={3: big_jpeg_bytes()}), max_edge=1000
+        )
+
+        # Reading a blob joins the transaction; aborting keeps the "writes
+        # nothing" promise true even if something upstream marked an object.
+        assert transaction.commits == 0
+        assert transaction.aborts == 1
+
+    def test_the_progress_file_is_not_touched(self, monkeypatch, tmp_path):
+        backfill = _backfill()
+        monkeypatch.setattr(backfill, "transaction", _FakeTransaction())
+        progress_path = tmp_path / "p.json"
+        portal = SimpleNamespace(_p_jar=_FakeConnection())
+
+        backfill.run(
+            portal,
+            max_edge=4000,
+            progress=backfill.Progress(progress_path),
+            chunk=10,
+            dry_run=True,
+            cursor=_RunnerCursor(chunks=[[]]),
+        )
+
+        assert not progress_path.exists()
+
+
+class TestDryRunNumbers:
+    """The four numbers a deployment picks its cap from."""
+
+    def test_it_reports_the_candidate_count(self, monkeypatch, tmp_path):
+        backfill = _backfill()
+        monkeypatch.setattr(backfill, "transaction", _FakeTransaction())
+        cursor = _RunnerCursor(
+            chunks=[[]], summary={"candidates": 263, "without_modified": 0}
+        )
+
+        report = backfill.dry_run_report(cursor, _FakeConnection(), max_edge=4000)
+
+        assert report["candidates"] == 263
+
+    def test_the_count_uses_the_candidate_predicate(self, monkeypatch, tmp_path):
+        from plone.pgthumbor.derivative import IS_DERIVATIVE_ATTRIBUTE
+
+        backfill = _backfill()
+        monkeypatch.setattr(backfill, "transaction", _FakeTransaction())
+        cursor = _RunnerCursor(chunks=[[]])
+
+        backfill.dry_run_report(cursor, _FakeConnection(), max_edge=4000)
+        summary = next(
+            " ".join(sql.split()) for sql, _ in cursor.calls if "count(*)" in sql
+        )
+
+        # A count over a different population than the run walks is worse
+        # than no count: it is a number that looks like an estimate.
+        assert f"NOT (state ? '{IS_DERIVATIVE_ATTRIBUTE}')" in summary
+        assert "_pgthumbor_source_info" in summary
+        assert "LIMIT" not in summary
+
+    def test_it_reports_the_median_encoded_derivative_size(self, monkeypatch, tmp_path):
+        from plone.pgthumbor.derivative import build_derivative_bytes
+        from tests.conftest import big_jpeg_bytes
+
+        import io
+
+        backfill = _backfill()
+        monkeypatch.setattr(backfill, "transaction", _FakeTransaction())
+        payloads = {
+            3: big_jpeg_bytes(size=(2400, 1800)),
+            9: big_jpeg_bytes(size=(1600, 1200)),
+            12: big_jpeg_bytes(size=(2000, 1500)),
+        }
+        expected = statistics.median(
+            len(build_derivative_bytes(io.BytesIO(data), 1000)[0])
+            for data in payloads.values()
+        )
+        cursor = _RunnerCursor(chunks=[[3, 9, 12]])
+
+        report = backfill.dry_run_report(
+            cursor, _FakeConnection(payloads=payloads), max_edge=1000
+        )
+
+        # Real bytes through the real encoder: the number an operator reads
+        # off this line is a storage estimate, and a mocked one would be a
+        # storage estimate of the mock.
+        assert report["median_bytes"] == int(expected)
+        assert report["sampled"] == 3
+
+    def test_images_needing_no_derivative_stay_out_of_the_median(
+        self, monkeypatch, tmp_path
+    ):
+        from tests.conftest import jpeg_bytes
+
+        backfill = _backfill()
+        monkeypatch.setattr(backfill, "transaction", _FakeTransaction())
+        cursor = _RunnerCursor(chunks=[[3]])
+
+        report = backfill.dry_run_report(
+            cursor, _FakeConnection(payloads={3: jpeg_bytes()}), max_edge=4000
+        )
+
+        assert report["sampled"] == 0
+        assert report["median_bytes"] is None
+
+    def test_an_undecodable_sample_does_not_end_the_dry_run(
+        self, monkeypatch, tmp_path
+    ):
+        from tests.conftest import big_jpeg_bytes
+        from tests.conftest import CORRUPT_BYTES
+
+        backfill = _backfill()
+        monkeypatch.setattr(backfill, "transaction", _FakeTransaction())
+        cursor = _RunnerCursor(chunks=[[3, 9]])
+        payloads = {3: CORRUPT_BYTES, 9: big_jpeg_bytes()}
+
+        report = backfill.dry_run_report(
+            cursor, _FakeConnection(payloads=payloads), max_edge=1000
+        )
+
+        assert report["sampled"] == 1
+
+    def test_it_counts_the_field_values_with_no_modified_attribute(
+        self, monkeypatch, tmp_path
+    ):
+        backfill = _backfill()
+        monkeypatch.setattr(backfill, "transaction", _FakeTransaction())
+        cursor = _RunnerCursor(
+            chunks=[[]], summary={"candidates": 263, "without_modified": 41}
+        )
+
+        report = backfill.dry_run_report(cursor, _FakeConnection(), max_edge=4000)
+
+        # This is the cache-invalidation blast radius.  On those, writing
+        # the derivative moves _p_mtime, and every scale uid for the image
+        # moves with it — hash_key folds modified_time, and
+        # ModifiedPropertyMixin.modified falls back to _p_mtime.
+        assert report["without_modified"] == 41
+
+    def test_the_attribute_counted_is_the_one_namedfile_writes(
+        self, monkeypatch, tmp_path
+    ):
+        from plone.namedfile.file import NamedBlobImage
+        from tests.conftest import jpeg_bytes
+        from tests.conftest import namedfile_storables
+
+        backfill = _backfill()
+        monkeypatch.setattr(backfill, "transaction", _FakeTransaction())
+        cursor = _RunnerCursor(chunks=[[]])
+        backfill.dry_run_report(cursor, _FakeConnection(), max_edge=4000)
+        summary = next(
+            " ".join(sql.split()) for sql, _ in cursor.calls if "count(*)" in sql
+        )
+
+        with namedfile_storables():
+            image = NamedBlobImage(
+                data=jpeg_bytes(), filename="t.jpg", contentType="image/jpeg"
+            )
+
+            # _setData writes it, so anything uploaded through the ordinary
+            # path is stable; the ones without it are the legacy population
+            # the number exists to size.
+            assert hasattr(image, backfill.MODIFIED_ATTRIBUTE)
+        assert f"NOT (state ? '{backfill.MODIFIED_ATTRIBUTE}')" in summary
+
+
+class TestCropHistogram:
+    """Which scale names actually carry crops — the binding S when choosing a cap."""
+
+    def test_it_counts_scale_names_behind_the_annotation_key(self):
+        backfill = _backfill()
+        cursor = _RunnerCursor(
+            annotations=[
+                {"crops": {"@ref": ["17db849812c6bd21", "persistent.mapping"]}}
+            ],
+            storages=[
+                {
+                    "state": {
+                        "data": {
+                            "image_albumfull": {"@t": [1, 2, 3, 4]},
+                            "image_preview": {"@t": [0, 0, 9, 9]},
+                        }
+                    }
+                }
+            ],
+        )
+
+        assert backfill.crop_histogram(cursor) == {"albumfull": 1, "preview": 1}
+
+    def test_the_annotation_key_is_the_one_the_crop_provider_reads(self):
+        from plone.pgthumbor.addons_compat.imagecropping import ANNOTATION_KEY
+
+        backfill = _backfill()
+        cursor = _RunnerCursor()
+
+        backfill.crop_histogram(cursor)
+
+        assert cursor.calls[0][1]["annotation_key"] == ANNOTATION_KEY
+
+    def test_the_reference_is_resolved_as_a_hex_zoid(self):
+        backfill = _backfill()
+        cursor = _RunnerCursor(
+            annotations=[{"crops": {"@ref": ["17db849812c6bd21", "x"]}}],
+            storages=[{"state": {"data": {"image_teaser": {}}}}],
+        )
+
+        backfill.crop_histogram(cursor)
+
+        assert cursor.calls[1][1]["zoids"] == [0x17DB849812C6BD21]
+
+    def test_crops_stored_inline_are_counted_without_a_second_query(self):
+        backfill = _backfill()
+        cursor = _RunnerCursor(annotations=[{"crops": {"lead_image_teaser": {}}}])
+
+        # A plain dict under the annotation key has no @ref to follow, and
+        # the keys are right there in the container's own state.
+        assert backfill.crop_histogram(cursor) == {"teaser": 1}
+        assert len(cursor.calls) == 1
+
+    def test_a_scale_name_containing_an_underscore_is_not_split_in_half(self):
+        backfill = _backfill()
+        cursor = _RunnerCursor(annotations=[{"crops": {"image_banner_large": {}}}])
+
+        # "{fieldname}_{scalename}" is ambiguous on its own; the registered
+        # names resolve it.  Without them the last segment is the only
+        # defensible guess.
+        assert backfill.crop_histogram(
+            cursor, scale_names=("banner_large", "large")
+        ) == {"banner_large": 1}
+        assert backfill.crop_histogram(cursor) == {"large": 1}
+
+    def test_no_crops_anywhere_is_an_empty_histogram(self):
+        backfill = _backfill()
+        cursor = _RunnerCursor()
+
+        assert backfill.crop_histogram(cursor) == {}
+        # And no pointless second query for an empty set of references.
+        assert len(cursor.calls) == 1
+
+    def test_a_query_that_cannot_run_is_an_empty_histogram_not_a_crash(self):
+        backfill = _backfill()
+
+        # plone.app.imagecropping absent, an older schema, a state shape
+        # this does not know: the dry run reports the other three numbers
+        # rather than dying on the optional one.
+        assert backfill.crop_histogram(_RaisingCursor()) == {}
+
+    def test_the_array_handed_to_the_lateral_is_always_an_array(self):
+        backfill = _backfill()
+        cursor = _RunnerCursor()
+
+        backfill.crop_histogram(cursor)
+        sql = " ".join(cursor.calls[0][0].split())
+
+        # A LATERAL function in the FROM list runs before WHERE, so a
+        # typeof guard sitting in WHERE would not stop the first row whose
+        # ``@kv`` is not an array from raising.
+        assert "CASE WHEN jsonb_typeof(state -> '@kv') = 'array'" in sql
+        assert "ELSE '[]'::jsonb" in sql
+
+    def test_an_ordinary_run_never_pays_for_the_scan(self, monkeypatch, tmp_path):
+        run = _generate(monkeypatch, tmp_path, chunks=[[3], []])
+
+        # There is no index for the crop query — it is a sequential scan
+        # over object_state, affordable once in a dry run and nowhere else.
+        assert not [
+            call for call in run.cursor.calls if "jsonb_array_elements" in call[0]
+        ]
+
+    def test_the_histogram_reaches_the_report(self, monkeypatch, tmp_path):
+        backfill = _backfill()
+        monkeypatch.setattr(backfill, "transaction", _FakeTransaction())
+        cursor = _RunnerCursor(
+            chunks=[[]], annotations=[{"crops": {"image_albumfull": {}}}]
+        )
+
+        report = backfill.dry_run_report(cursor, _FakeConnection(), max_edge=4000)
+
+        assert report["crops"] == {"albumfull": 1}
+
+
+class TestRunDispatch:
+    """``run`` is the entry point; phase 2 is not finished and must say so."""
+
+    def test_a_dry_run_never_enters_phase_one(self, monkeypatch, tmp_path):
+        backfill = _backfill()
+        transaction = _FakeTransaction()
+        monkeypatch.setattr(backfill, "transaction", transaction)
+        entered = []
+        monkeypatch.setattr(
+            backfill, "run_generate", lambda *a, **kw: entered.append(1)
+        )
+
+        backfill.run(
+            SimpleNamespace(_p_jar=_FakeConnection()),
+            max_edge=4000,
+            progress=backfill.Progress(tmp_path / "p.json"),
+            chunk=10,
+            dry_run=True,
+            cursor=_RunnerCursor(chunks=[[]]),
+        )
+
+        assert entered == []
+
+    def test_an_ordinary_run_walks_the_population(self, monkeypatch, tmp_path):
+        backfill = _backfill()
+        monkeypatch.setattr(backfill, "transaction", _FakeTransaction())
+        monkeypatch.setattr(backfill, "set_source_derivative", lambda *a, **kw: True)
+        progress = backfill.Progress(tmp_path / "p.json")
+
+        backfill.run(
+            SimpleNamespace(_p_jar=_FakeConnection()),
+            max_edge=4000,
+            progress=progress,
+            chunk=10,
+            cursor=_RunnerCursor(chunks=[[3, 9], []]),
+        )
+
+        assert progress.last_zoid(backfill.PHASE_GENERATE) == 9
+
+    def test_a_finished_phase_one_is_not_a_finished_run(
+        self, monkeypatch, tmp_path, capsys
+    ):
+        backfill = _backfill()
+        monkeypatch.setattr(backfill, "transaction", _FakeTransaction())
+        monkeypatch.setattr(backfill, "set_source_derivative", lambda *a, **kw: True)
+        progress = backfill.Progress(tmp_path / "p.json")
+
+        backfill.run(
+            SimpleNamespace(_p_jar=_FakeConnection()),
+            max_edge=4000,
+            progress=progress,
+            chunk=10,
+            cursor=_RunnerCursor(chunks=[[3], []]),
+        )
+
+        # Between the phases the catalog still holds direct Thumbor URLs
+        # pointing at the originals, and a browser fetches those without
+        # Plone in the path.  Reporting success here would be a lie.
+        assert progress.reindex_pending is True
+        assert backfill.PHASE_REINDEX in capsys.readouterr().out
+
+
+class TestWorkListCursorLifecycle:
+    """The work-list connection is borrowed from the pool, and given back."""
+
+    def _pool(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        backfill = _backfill()
+        connection = MagicMock()
+        connection.autocommit = False
+        pool = MagicMock()
+        pool.getconn.return_value = connection
+        monkeypatch.setitem(
+            __import__("sys").modules,
+            "plone.pgcatalog.pool",
+            MagicMock(get_pool=lambda portal: pool),
+        )
+        return backfill, pool, connection
+
+    def test_the_connection_goes_back_to_the_pool(self, monkeypatch):
+        backfill, pool, connection = self._pool(monkeypatch)
+
+        with backfill.work_list_cursor(object()):
+            assert pool.putconn.call_count == 0
+
+        pool.putconn.assert_called_once_with(connection)
+
+    def test_autocommit_is_reset_before_it_goes_back(self, monkeypatch):
+        backfill, pool, connection = self._pool(monkeypatch)
+        seen = []
+        pool.putconn.side_effect = lambda conn: seen.append(conn.autocommit)
+
+        with backfill.work_list_cursor(object()) as cursor:
+            assert cursor is not None
+            assert connection.autocommit is True
+
+        # psycopg_pool rolls back an open transaction on putconn but does
+        # not restore autocommit, so a connection handed back as-is would
+        # leave the next borrower in autocommit without knowing it.
+        assert seen == [False]
+
+    def test_it_goes_back_even_when_the_walk_raises(self, monkeypatch):
+        backfill, pool, connection = self._pool(monkeypatch)
+
+        with pytest.raises(RuntimeError), backfill.work_list_cursor(object()):
+            raise RuntimeError("chunk exploded")
+
+        pool.putconn.assert_called_once_with(connection)

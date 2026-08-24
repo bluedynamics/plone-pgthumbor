@@ -25,6 +25,17 @@ def upgrade_to_3(context):
             del registry.records[key]
 
 
+def upgrade_to_4(context):
+    """Register the source_max_edge record introduced in profile version 4.
+
+    ``post_install`` is a profile post-handler and runs on install only, so
+    an existing site would otherwise take the new code and never receive a
+    registry record for the new setting.
+    """
+    registry = getUtility(IRegistry)
+    registry.registerInterface(IThumborSettings, prefix="plone.pgthumbor.settings")
+
+
 def post_install(context):
     """Register IThumborSettings in the Plone registry."""
     registry = getUtility(IRegistry)

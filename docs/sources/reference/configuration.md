@@ -20,6 +20,7 @@ ignored.
 | `PGTHUMBOR_SERVER_URL` | string | (none) | Public URL of the Thumbor server (for example, `http://thumbor:8888`). Required for Thumbor URL generation. Trailing slashes are stripped automatically. |
 | `PGTHUMBOR_SECURITY_KEY` | string | `""` | Shared HMAC-SHA1 key for signing Thumbor URLs. Must match the `SECURITY_KEY` in `thumbor.conf`. Required unless `PGTHUMBOR_UNSAFE` is enabled. |
 | `PGTHUMBOR_UNSAFE` | boolean | `false` | Generate unsigned `/unsafe/` URLs. Accepts `true`, `1`, or `yes` (case-insensitive). For development only. |
+| `PGTHUMBOR_SOURCE_MAX_EDGE` | integer | `4000` | Longest edge in pixels for the Thumbor source derivative. `0` disables derivative generation entirely. Values above `8000` are clamped. See [Choosing a source derivative cap](#choosing-a-source-derivative-cap). |
 
 If neither `PGTHUMBOR_SECURITY_KEY` nor `PGTHUMBOR_UNSAFE` is set,
 Thumbor URL generation is disabled and Plone falls back to standard
@@ -33,11 +34,41 @@ variables override these values when set.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `server_url` | TextLine | `""` | Public URL of the Thumbor server. |
-| `security_key` | TextLine | `""` | Shared HMAC-SHA1 key for signing Thumbor URLs. |
-| `unsafe` | Bool | `False` | Generate unsigned URLs (development only). |
 | `smart_cropping` | Bool | `False` | Enable Thumbor smart cropping (OpenCV face/feature detection). Applied to `scale` and `cover` modes. |
 | `paranoid_mode` | Bool | `False` | Always verify image access with Plone for every request, even for publicly accessible content. When disabled, only non-public images use the authenticated 3-segment URL format. |
+| `source_max_edge` | Int | `4000` | Longest edge in pixels for the Thumbor source derivative. Constrained to the range `0` to `8000`. |
+
+`server_url`, `security_key` and `unsafe` are not registry fields.
+They are configured through environment variables only, and the records were removed by the profile upgrade to version 3.
+
+### Choosing a source derivative cap
+
+The default of `4000` is a safe starting point for a site nobody has measured.
+It is not a recommendation for your site.
+
+The cap trades storage against how far an editor can crop before the result softens.
+A crop covering fraction *X* of the derivative's edge feeds `cap * X` source pixels into a rendition of width *S*, so it stays lossless while `X >= S / cap`.
+The binding *S* is not your largest registered scale.
+It is the largest scale that actually carries a crop, because crops are stored per scale name.
+
+| Largest cropped scale | cap 4000 | cap 5000 |
+|---|---|---|
+| 1600 | 40 % | 32 % |
+| 460 | 11.5 % | 9.2 % |
+| 400 | 10 % | 8 % |
+| 175 | 4.4 % | 3.5 % |
+
+A site that only crops a 400 pixel preview therefore has a threshold of 10 % at the default cap, not 40 %.
+Raising the cap to `5000` costs roughly 1.56 times the storage and resize memory per derivative.
+
+The `8000` ceiling is not a matter of taste.
+A longest edge of *E* bounds the derivative at *E²* pixels, and Thumbor refuses to process anything above its `MAX_PIXELS` limit of 75 megapixels.
+Above `sqrt(75e6)`, roughly 8660, a derivative could reproduce the very HTTP 400 the feature exists to remove.
+It would do so silently, because generation would succeed and only Thumbor would object.
+Values above the ceiling are clamped on read, including values already stored in the registry before the bound existed.
+
+Changing the cap is a setting change rather than a migration.
+The cap in force is recorded alongside each derivative, so an ordinary backfill run picks up everything generated under a different value.
 
 ### Crop providers (ICropProvider)
 

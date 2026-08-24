@@ -87,4 +87,12 @@
       handler=".setuphandlers.upgrade_to_3"
       />
 
+  <genericsetup:upgradeStep
+      title="Register the source_max_edge setting"
+      profile="plone.pgthumbor:default"
+      source="3"
+      destination="4"
+      handler=".setuphandlers.upgrade_to_4"
+      />
+
 </configure>

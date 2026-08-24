@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 from unittest.mock import patch
+from ZODB.POSException import ConflictError
+
+import pytest
 
 
 def _make_storage():
@@ -122,12 +125,53 @@ class TestMintTime:
         assert storage._mint_time("image") == 1700000000000
 
 
+class TestOriginalSize:
+    """The original image's ``(width, height)``, read off the field value."""
+
+    def test_missing_field_returns_none(self):
+        from plone.pgthumbor.storage import ThumborScaleStorage
+
+        ctx = MagicMock(spec=["_p_mtime"])
+        storage = ThumborScaleStorage(ctx, modified=None)
+
+        assert storage._original_size("image") is None
+
+    def test_value_without_get_image_size_returns_none(self):
+        storage = _make_storage()
+        storage.context.image = object()
+
+        assert storage._original_size("image") is None
+
+    def test_conflict_error_propagates(self):
+        """A ConflictError must reach the publisher's retry loop, not be
+        swallowed as "no download candidate"."""
+        storage = _make_storage()
+        storage.context.image.getImageSize.side_effect = ConflictError()
+
+        with pytest.raises(ConflictError):
+            storage._original_size("image")
+
+    def test_other_exception_returns_none(self):
+        storage = _make_storage()
+        storage.context.image.getImageSize.side_effect = ValueError("corrupt")
+
+        assert storage._original_size("image") is None
+
+    def test_happy_path_returns_the_size(self):
+        storage = _make_storage()
+        storage.context.image.getImageSize.return_value = (400, 300)
+
+        assert storage._original_size("image") == (400, 300)
+
+
 class TestHealByHashMatch:
     """Mint a uid, then heal it: the recovered parameters must be identical.
 
-    This is the whole point of the fix. A storage built the way traversal
-    builds it (modified=None) cannot reproduce a mint-time hash, so every
-    test here also proves the mint time was reconstructed.
+    This is the whole point of the fix. Most tests here patch ``_mint_time``
+    to the constant it was minted against and use it to reach a match;
+    proving that ``_mint_time`` reconstructs that value correctly is
+    ``TestMintTime``'s job, not this class's. The two 404 tests below never
+    reach ``_mint_time`` at all — they short-circuit in ``parse_legacy_uid``.
     """
 
     MINT_TIME = 1755000000000

@@ -19,6 +19,7 @@ from plone.pgthumbor.uid_healing import candidate_parameters
 from plone.pgthumbor.uid_healing import parse_legacy_uid
 from plone.pgthumbor.uid_healing import registered_scales
 from plone.scale.storage import AnnotationStorage
+from ZODB.POSException import ConflictError
 from zope.globalrequest import getRequest
 
 import logging
@@ -107,6 +108,8 @@ class ThumborScaleStorage(AnnotationStorage):
             return None
         try:
             return get_size()
+        except ConflictError:
+            raise
         except Exception:
             logger.warning(
                 "Could not read image size for %r field %s",

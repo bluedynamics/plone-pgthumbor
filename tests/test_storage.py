@@ -378,3 +378,58 @@ class TestThumborScaleStorageFactory:
 
         assert isinstance(result, AnnotationStorage)
         assert not isinstance(result, ThumborScaleStorage)
+
+
+class TestStaleUidFallback:
+    """A uid older than the image's last modification cannot be identified."""
+
+    def _fallback(self, dimension, scales):
+        storage = _make_storage()
+        return storage._fallback_parameters("image", dimension, scales)
+
+    def test_picks_the_first_registered_scale_with_that_width(self):
+        parameters = self._fallback(400, (("preview", 400, 0), ("Haeuser", 400, 200)))
+
+        assert (parameters["width"], parameters["height"]) == (400, 0)
+        assert parameters["mode"] == "scale"
+        assert parameters["scale"] is None
+
+    def test_zero_width_prefers_a_registered_height_driven_scale(self):
+        """Never request the original's dimensions while a 0:H scale exists:
+        that is the variant that can push Thumbor past MAX_PIXELS."""
+        parameters = self._fallback(0, (("Header", 0, 460),))
+
+        assert (parameters["width"], parameters["height"]) == (0, 460)
+
+    def test_zero_width_without_a_registered_scale_means_the_original(self):
+        """The genuine tag()-without-a-width case, and the only reading left."""
+        parameters = self._fallback(0, (("preview", 400, 0),))
+
+        assert (parameters["width"], parameters["height"]) == (None, None)
+
+    def test_unregistered_width_has_no_fallback(self):
+        assert self._fallback(999, (("preview", 400, 0),)) is None
+
+    def test_stale_uid_reaches_the_fallback(self):
+        """End to end: a uid whose hash matches nothing still renders."""
+        storage = _make_storage()
+        recorded = {}
+
+        def fake_pre_scale(**parameters):
+            recorded.update(parameters)
+            return {"uid": "x", "data": None}
+
+        with (
+            patch.object(storage, "pre_scale", side_effect=fake_pre_scale),
+            patch.object(storage, "_mint_time", return_value=1755000000000),
+            patch.object(storage, "_original_size", return_value=None),
+            patch(
+                "plone.pgthumbor.storage.registered_scales",
+                return_value=(("Haeuser", 400, 200),),
+            ),
+        ):
+            result = storage.get_or_generate("image-400-" + "f" * 32)
+
+        assert result is not None
+        assert (recorded["width"], recorded["height"]) == (400, 200)
+        assert recorded["mode"] == "scale"

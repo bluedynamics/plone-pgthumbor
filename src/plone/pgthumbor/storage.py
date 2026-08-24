@@ -129,6 +129,43 @@ class ThumborScaleStorage(AnnotationStorage):
                 return parameters
         return None
 
+    def _fallback_parameters(self, fieldname, dimension, scales):
+        """Parameters to use when no candidate hashes to the requested uid.
+
+        The uid predates the image's last modification, so its parameters are
+        unrecoverable: ``modified`` is part of the hash.  Serve the current
+        image anyway.  plone.scale deliberately returns outdated scales at this
+        point, and a cached page whose image was replaced should show the new
+        image rather than a hole.
+
+        The original's dimensions are only requested when the uid carries no
+        width and no ``0:H`` scale is registered, which is the genuine
+        ``tag()``-without-a-width case and the only reading left.  Requesting
+        them speculatively is what can push Thumbor past ``MAX_PIXELS``.
+
+        An unregistered width returns None and traversal raises NotFound,
+        keeping the issue #17 gate that stops arbitrary dimensions from being
+        signed on demand.
+        """
+        for _name, width, height in scales:
+            if width == dimension:
+                return {
+                    "fieldname": fieldname,
+                    "width": width,
+                    "height": height,
+                    "mode": "scale",
+                    "scale": None,
+                }
+        if dimension == 0:
+            return {
+                "fieldname": fieldname,
+                "width": None,
+                "height": None,
+                "mode": "scale",
+                "scale": None,
+            }
+        return None
+
     def _heal_legacy_uid(self, uid):
         """Rebuild scale info for a ``{fieldname}-{width}-{md5hex}`` uid.
 
@@ -154,6 +191,8 @@ class ThumborScaleStorage(AnnotationStorage):
 
         scales = registered_scales()
         parameters = self._match_candidate(uid, fieldname, dimension, scales)
+        if parameters is None:
+            parameters = self._fallback_parameters(fieldname, dimension, scales)
         if parameters is None:
             return None
         info = self.pre_scale(**parameters)

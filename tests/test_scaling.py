@@ -415,9 +415,11 @@ class TestScaleModeMapping:
 
     def test_cover_mode(self, monkeypatch):
         """Cover mode → no fit-in in Thumbor URL."""
+        from plone.pgthumbor import url as url_mod
         from plone.pgthumbor.scaling import ThumborImageScale
 
         _setup_env(monkeypatch)
+        monkeypatch.setattr(url_mod, "PLONE_SCALE_VERSION", "6.0.0")
         ctx = MagicMock()
         ctx.absolute_url.return_value = "http://plone:8080/doc"
         request = MagicMock()
@@ -449,6 +451,9 @@ class TestScaleModeMapping:
         # Patch config in the scaling module (where it's imported)
         from plone.pgthumbor import config as config_mod
         from plone.pgthumbor import scaling as scaling_mod
+        from plone.pgthumbor import url as url_mod
+
+        monkeypatch.setattr(url_mod, "PLONE_SCALE_VERSION", "6.0.0")
 
         original_fn = config_mod.get_thumbor_config
 
@@ -947,8 +952,10 @@ class TestBuildThumborUrlWithCrop:
     def test_no_crop_keeps_mode_behavior(self, monkeypatch):
         """Without crop, mode params unchanged."""
         from plone.pgthumbor import scaling as scaling_mod
+        from plone.pgthumbor import url as url_mod
 
         _setup_env(monkeypatch)
+        monkeypatch.setattr(url_mod, "PLONE_SCALE_VERSION", "6.0.0")
         monkeypatch.setattr(
             scaling_mod, "_needs_auth_url", lambda ctx, zoid, paranoid_mode=False: False
         )

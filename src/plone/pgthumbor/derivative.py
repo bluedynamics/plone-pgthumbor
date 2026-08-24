@@ -1,8 +1,9 @@
 """Thumbor source derivatives — the pixel work.
 
-Pure by construction: bytes in, bytes out.  No ZODB, no ZCA, no request.
-Anything that needs a persistent object lives in ``set_source_derivative``;
-anything that needs a URL lives in ``scaling.py``.
+The pixel work is pure: bytes in, bytes out.  ``set_source_derivative`` is
+the one function that touches a persistent object, and it imports ZODB and
+ZCA lazily so importing this module stays free of them.  Anything that needs
+a URL lives in ``scaling.py``.
 
 The point of a derivative is that Thumbor never sees a print-resolution
 original.  It is capped on the longest edge and normalised to a clean sRGB
@@ -158,11 +159,11 @@ def _coerce_to_stream(source):
     return source
 
 
-def _open_and_draft(source, max_edge: int) -> Image.Image:
-    """Open *source* and ask the decoder for a reduced-resolution read.
+def _open_source(source) -> Image.Image:
+    """Open *source* and enforce our own pixel ceiling.  No draft yet.
 
-    Returns an image that has not been loaded yet; its ``size`` already
-    reflects the reduction the decoder agreed to.
+    Returns an unloaded image whose ``size`` is the true source size, which
+    is what the trigger has to be evaluated against.
 
     ``Image.MAX_IMAGE_PIXELS`` is deliberately not touched.  It is a module
     global consulted by every ``Image.open`` in the process, including
@@ -180,12 +181,21 @@ def _open_and_draft(source, max_edge: int) -> Image.Image:
             f"source is {width}x{height} = {width * height} px, "
             f"above MAX_SOURCE_PIXELS ({MAX_SOURCE_PIXELS})"
         )
+    return image
 
+
+def _draft(image: Image.Image, max_edge: int) -> Image.Image:
+    """Ask the decoder for a reduced-resolution read of an open image."""
     # mode=None: leave the colour space alone.  The CMYK conversion is done
     # deliberately afterwards, through the embedded ICC profile when one is
     # present, rather than as a decoder side effect.
     image.draft(None, _draft_target(image.size, max_edge))
     return image
+
+
+def _open_and_draft(source, max_edge: int) -> Image.Image:
+    """Open *source* and ask the decoder for a reduced-resolution read."""
+    return _draft(_open_source(source), max_edge)
 
 
 # Quality 92 at 4:4:4.  The derivative is an intermediate that Thumbor
@@ -296,11 +306,18 @@ def build_derivative_bytes(source, max_edge: int):
 
     source_length = _source_length(source)
     try:
-        image = _open_and_draft(source, max_edge)
+        # Open before drafting, and evaluate the trigger against the *true*
+        # source size.  Drafting first is a trap: when the power-of-two
+        # reduction lands exactly on the cap — any original whose longest
+        # edge is cap x 2, x 4 or x 8 — the drafted image is no longer
+        # "> max_edge", the trigger silently stops firing, and precisely
+        # the oversized images this exists for get no derivative.
+        image = _open_source(source)
         if _is_excluded_image(image):
             return None
         if not _needs_derivative(image, max_edge):
             return None
+        image = _draft(image, max_edge)
 
         # Colour before geometry.  Resampling a palette image in palette
         # space interpolates palette *indices* and produces garbage, so P
@@ -321,3 +338,133 @@ def build_derivative_bytes(source, max_edge: int):
             exc_info=True,
         )
         return None
+
+
+# Outcome reasons, spelled once so the backfill can import them instead of
+# re-typing the strings.
+#
+# Terminal means "re-running would change nothing".  Everything else is
+# transient and has to stay a backfill candidate: "retry" comes from the
+# decode semaphore timing out, "error" from a failed decode.  Marking those
+# terminal would let one contended upload exclude its image permanently
+# while the terminal verification still reported success.
+REASON_GENERATED = "generated"
+REASON_NOT_NEEDED = "not_needed"
+REASON_SKIPPED_TYPE = "skipped_type"
+REASON_RETRY = "retry"
+REASON_ERROR = "error"
+
+TERMINAL_REASONS = frozenset({REASON_GENERATED, REASON_NOT_NEEDED, REASON_SKIPPED_TYPE})
+
+
+def _derivative_filename(named_image, extension: str) -> str:
+    """A recognisable filename, so a stray blob can be traced back here."""
+    original = getattr(named_image, "filename", None) or "image"
+    stem = original.rsplit(".", 1)[0] or "image"
+    return f"{stem}-pgthumbor-source.{extension}"
+
+
+def _should_process(named_image, max_edge: int, force: bool) -> bool:
+    """Whether *named_image* still needs examining at this cap."""
+    if force:
+        return True
+    info = getattr(named_image, "_pgthumbor_source_info", None)
+    if not isinstance(info, dict):
+        return True
+    if info.get("reason") not in TERMINAL_REASONS:
+        return True
+    # Recorded under a different cap.  This is what turns tuning
+    # PGTHUMBOR_SOURCE_MAX_EDGE into a setting change rather than a
+    # migration: an ordinary run picks the image up again, with no force
+    # flag for anyone to forget.
+    return info.get("max_edge") != max_edge
+
+
+def _record(named_image, derivative, reason: str, max_edge: int) -> None:
+    """Write the derivative and its outcome onto the field value."""
+    from plone.pgthumbor.blob import get_blob_ids
+
+    named_image._pgthumbor_source = derivative
+    named_image._pgthumbor_source_info = {
+        "reason": reason,
+        "max_edge": max_edge,
+        # None here means "not comparable", not "mismatched".  A freshly
+        # uploaded original has no committed identity yet, so the URL
+        # builder must read None as "no evidence of mutation" rather than
+        # as a mismatch.  The guard against an in-place `image.data = ...`
+        # is only meaningful for a committed original, which is the
+        # backfill's case and the one where migration scripts operate.
+        "source_ids": get_blob_ids(named_image),
+    }
+
+
+def set_source_derivative(
+    named_image, max_edge: int | None = None, force=False
+) -> bool:
+    """Give *named_image* a Thumbor source derivative, or record why not.
+
+    Returns True when a derivative blob was written.  Everything else — no
+    derivative needed, a skipped type, a failed decode — returns False and
+    leaves an outcome record behind, because a silent skip is
+    indistinguishable from "correctly not needed" and would make the
+    backfill's termination criterion unreachable.
+
+    *max_edge* defaults to the configured cap.  With no configuration, or
+    with a cap of 0, nothing at all is written: the object stays a
+    candidate, so turning the kill switch back off lets the backfill find
+    it again.
+    """
+    from plone.namedfile.file import NamedBlobImage
+    from plone.pgthumbor.config import get_thumbor_config
+
+    if max_edge is None:
+        config = get_thumbor_config()
+        if config is None:
+            return False
+        max_edge = config.source_max_edge
+
+    if max_edge <= 0:
+        return False
+
+    if not _should_process(named_image, max_edge, force):
+        return False
+
+    if getattr(named_image, "contentType", "") in _SKIP_CONTENT_TYPES:
+        # Recorded without reading a single byte.
+        _record(named_image, None, REASON_SKIPPED_TYPE, max_edge)
+        return False
+
+    try:
+        # open("r"), never .data: the latter materialises the whole blob as
+        # bytes before Pillow sees it, which defeats the lazy draft decode
+        # this module exists to perform.
+        with named_image.open("r") as stream:
+            built = build_derivative_bytes(stream, max_edge)
+    except Exception:
+        logger.warning(
+            "Reading the source blob for a Thumbor derivative failed",
+            exc_info=True,
+        )
+        _record(named_image, None, REASON_ERROR, max_edge)
+        return False
+
+    if built is None:
+        # Either no trigger fired, or the image is one we never touch (an
+        # animated GIF).  Both are terminal, and the two are not
+        # distinguishable at this boundary — nothing depends on telling
+        # them apart, so they share a reason.
+        _record(named_image, None, REASON_NOT_NEEDED, max_edge)
+        return False
+
+    payload, content_type, extension = built
+    _record(
+        named_image,
+        NamedBlobImage(
+            data=payload,
+            filename=_derivative_filename(named_image, extension),
+            contentType=content_type,
+        ),
+        REASON_GENERATED,
+        max_edge,
+    )
+    return True

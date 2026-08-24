@@ -571,3 +571,343 @@ class TestLargerDerivativeReporting:
 
         assert _source_length(stream) == 10
         assert stream.tell() == 4
+
+
+def _named_image(data=None, content_type="image/jpeg", filename="t.jpg"):
+    from plone.namedfile.file import NamedBlobImage
+
+    return NamedBlobImage(
+        data=jpeg_bytes() if data is None else data,
+        filename=filename,
+        contentType=content_type,
+    )
+
+
+def _configured(monkeypatch, **kwargs):
+    from tests.conftest import env_override
+
+    env_override(
+        monkeypatch,
+        PGTHUMBOR_SERVER_URL="http://thumbor:8888",
+        PGTHUMBOR_SECURITY_KEY="key",
+        **kwargs,
+    )
+
+
+class TestOutcomeVocabulary:
+    """Terminal and non-terminal reasons, in one place."""
+
+    def test_terminal_reasons_are_exported(self):
+        from plone.pgthumbor.derivative import TERMINAL_REASONS
+
+        assert (
+            frozenset({"generated", "not_needed", "skipped_type"}) == TERMINAL_REASONS
+        )
+
+    def test_transient_reasons_are_not_terminal(self):
+        from plone.pgthumbor.derivative import TERMINAL_REASONS
+
+        # "retry" comes from a semaphore timeout, "error" from a failed
+        # decode.  Both mean "try again later", and marking them terminal
+        # would exclude the image from the backfill for good while the
+        # terminal verification still reported success.
+        assert "retry" not in TERMINAL_REASONS
+        assert "error" not in TERMINAL_REASONS
+
+
+class TestSetSourceDerivative:
+    """Writing the derivative and its outcome record onto the field value."""
+
+    def test_oversized_gets_a_derivative(self, monkeypatch):
+        from plone.namedfile.file import NamedBlobImage
+        from plone.pgthumbor.derivative import set_source_derivative
+        from tests.conftest import namedfile_storables
+
+        _configured(monkeypatch)
+        with namedfile_storables():
+            image = _named_image(big_jpeg_bytes())
+
+            assert set_source_derivative(image, max_edge=1000) is True
+            assert isinstance(image._pgthumbor_source, NamedBlobImage)
+            assert image._pgthumbor_source.getImageSize() == (1000, 750)
+            assert image._pgthumbor_source_info["reason"] == "generated"
+            assert image._pgthumbor_source_info["max_edge"] == 1000
+
+    def test_small_clean_records_that_nothing_is_needed(self, monkeypatch):
+        from plone.pgthumbor.derivative import set_source_derivative
+        from tests.conftest import namedfile_storables
+
+        _configured(monkeypatch)
+        with namedfile_storables():
+            image = _named_image()
+
+            assert set_source_derivative(image, max_edge=4000) is False
+            # An explicit None, not a missing attribute: "examined and not
+            # needed" has to be distinguishable from "never examined", or
+            # the backfill can never terminate.
+            assert image._pgthumbor_source is None
+            assert image._pgthumbor_source_info["reason"] == "not_needed"
+
+    def test_svg_is_recorded_without_decoding(self, monkeypatch):
+        from plone.pgthumbor import derivative
+        from tests.conftest import namedfile_storables
+        from tests.conftest import SVG_BYTES
+
+        _configured(monkeypatch)
+        calls = []
+        monkeypatch.setattr(
+            derivative, "build_derivative_bytes", lambda *a, **k: calls.append(1)
+        )
+        with namedfile_storables():
+            image = _named_image(
+                SVG_BYTES, content_type="image/svg+xml", filename="t.svg"
+            )
+
+            assert derivative.set_source_derivative(image, max_edge=4000) is False
+            assert calls == []
+            assert image._pgthumbor_source_info["reason"] == "skipped_type"
+
+    def test_an_examined_image_is_not_examined_again(self, monkeypatch):
+        from plone.pgthumbor import derivative
+        from tests.conftest import namedfile_storables
+
+        _configured(monkeypatch)
+        with namedfile_storables():
+            image = _named_image()
+            derivative.set_source_derivative(image, max_edge=4000)
+
+            calls = []
+            monkeypatch.setattr(
+                derivative, "build_derivative_bytes", lambda *a, **k: calls.append(1)
+            )
+            derivative.set_source_derivative(image, max_edge=4000)
+
+            assert calls == []
+
+    def test_force_examines_it_again(self, monkeypatch):
+        from plone.pgthumbor import derivative
+        from tests.conftest import namedfile_storables
+
+        _configured(monkeypatch)
+        with namedfile_storables():
+            image = _named_image()
+            derivative.set_source_derivative(image, max_edge=4000)
+
+            calls = []
+            monkeypatch.setattr(
+                derivative, "build_derivative_bytes", lambda *a, **k: calls.append(1)
+            )
+            derivative.set_source_derivative(image, max_edge=4000, force=True)
+
+            assert calls == [1]
+
+    def test_a_different_cap_reprocesses_without_force(self, monkeypatch):
+        from plone.pgthumbor.derivative import set_source_derivative
+        from tests.conftest import namedfile_storables
+
+        # This is what makes tuning the cap a setting change rather than a
+        # migration: an ordinary backfill run picks up everything generated
+        # under a different value, with no force flag to remember.
+        _configured(monkeypatch)
+        with namedfile_storables():
+            image = _named_image(big_jpeg_bytes())
+            set_source_derivative(image, max_edge=1000)
+
+            assert set_source_derivative(image, max_edge=1200) is True
+            assert image._pgthumbor_source.getImageSize() == (1200, 900)
+            assert image._pgthumbor_source_info["max_edge"] == 1200
+
+    def test_a_non_terminal_outcome_is_reprocessed_without_force(self, monkeypatch):
+        from plone.pgthumbor.derivative import set_source_derivative
+        from tests.conftest import namedfile_storables
+
+        _configured(monkeypatch)
+        with namedfile_storables():
+            image = _named_image(big_jpeg_bytes())
+            image._pgthumbor_source_info = {
+                "reason": "retry",
+                "max_edge": 1000,
+                "source_ids": None,
+            }
+
+            assert set_source_derivative(image, max_edge=1000) is True
+
+    def test_a_disabled_cap_writes_no_attribute_at_all(self, monkeypatch):
+        from plone.pgthumbor.derivative import set_source_derivative
+        from tests.conftest import namedfile_storables
+
+        _configured(monkeypatch)
+        with namedfile_storables():
+            image = _named_image(big_jpeg_bytes())
+
+            assert set_source_derivative(image, max_edge=0) is False
+            # Not even an outcome record: the object stays a candidate, so
+            # turning the kill switch back off lets the backfill find it.
+            assert not hasattr(image, "_pgthumbor_source")
+            assert not hasattr(image, "_pgthumbor_source_info")
+
+    def test_the_cap_comes_from_config_when_omitted(self, monkeypatch):
+        from plone.pgthumbor.derivative import set_source_derivative
+        from tests.conftest import namedfile_storables
+
+        _configured(monkeypatch, PGTHUMBOR_SOURCE_MAX_EDGE="1000")
+        with namedfile_storables():
+            image = _named_image(big_jpeg_bytes())
+
+            assert set_source_derivative(image) is True
+            assert image._pgthumbor_source_info["max_edge"] == 1000
+
+    def test_without_config_it_does_nothing(self, monkeypatch):
+        from plone.pgthumbor.derivative import set_source_derivative
+        from tests.conftest import env_override
+        from tests.conftest import namedfile_storables
+
+        env_override(monkeypatch)
+        with namedfile_storables():
+            image = _named_image(big_jpeg_bytes())
+
+            assert set_source_derivative(image) is False
+            assert not hasattr(image, "_pgthumbor_source")
+
+    def test_a_raising_generator_records_a_non_terminal_error(self, monkeypatch):
+        from plone.pgthumbor import derivative
+        from tests.conftest import namedfile_storables
+
+        _configured(monkeypatch)
+        monkeypatch.setattr(derivative, "build_derivative_bytes", _raise_value_error)
+        with namedfile_storables():
+            image = _named_image(big_jpeg_bytes())
+
+            assert derivative.set_source_derivative(image, max_edge=1000) is False
+            assert image._pgthumbor_source is None
+            assert image._pgthumbor_source_info["reason"] == "error"
+
+    def test_source_bytes_are_read_through_open_not_data(self, monkeypatch):
+        from plone.namedfile.file import NamedBlobImage
+        from plone.pgthumbor.derivative import set_source_derivative
+        from tests.conftest import namedfile_storables
+
+        # .data materialises a 40 MB blob as bytes before Pillow sees it,
+        # which defeats the whole point of the lazy draft decode.
+        with namedfile_storables():
+            image = _named_image(big_jpeg_bytes())
+            _configured(monkeypatch)
+            monkeypatch.setattr(
+                NamedBlobImage, "data", property(_explode), raising=False
+            )
+
+            assert set_source_derivative(image, max_edge=1000) is True
+
+
+class TestCommitSemantics:
+    """The design's commit-semantics table, against a real ZODB."""
+
+    def test_a_fresh_derivative_has_no_blob_ids(self, monkeypatch):
+        from plone.pgthumbor.blob import get_blob_ids
+        from plone.pgthumbor.derivative import set_source_derivative
+        from tests.conftest import namedfile_storables
+        from tests.conftest import zodb_db
+
+        _configured(monkeypatch)
+        with namedfile_storables(), zodb_db() as db:
+            connection = db.open()
+            image = _named_image(big_jpeg_bytes())
+            connection.root()["image"] = image
+            set_source_derivative(image, max_edge=1000)
+
+            # "Backfill, phase 1 -> uid fallback" in the design's table.
+            # ZODB assigns oids during _store_objects, so a derivative
+            # created in this transaction cannot be named by a Thumbor URL
+            # until it is committed.  Substituting the original in that
+            # window is exactly what the design refuses to do.
+            assert get_blob_ids(image._pgthumbor_source) is None
+
+    def test_the_derivative_gets_blob_ids_once_committed(self, monkeypatch):
+        from plone.pgthumbor.blob import get_blob_ids
+        from plone.pgthumbor.derivative import set_source_derivative
+        from tests.conftest import namedfile_storables
+        from tests.conftest import zodb_db
+
+        import transaction
+
+        _configured(monkeypatch)
+        with namedfile_storables(), zodb_db() as db:
+            connection = db.open()
+            image = _named_image(big_jpeg_bytes())
+            connection.root()["image"] = image
+            set_source_derivative(image, max_edge=1000)
+            transaction.commit()
+
+            ids = get_blob_ids(image._pgthumbor_source)
+
+            assert ids is not None
+            assert ids != get_blob_ids(image)
+
+    def test_a_committed_original_records_its_ids(self, monkeypatch):
+        from plone.pgthumbor.blob import get_blob_ids
+        from plone.pgthumbor.derivative import set_source_derivative
+        from tests.conftest import namedfile_storables
+        from tests.conftest import zodb_db
+
+        import transaction
+
+        _configured(monkeypatch)
+        with namedfile_storables(), zodb_db() as db:
+            connection = db.open()
+            image = _named_image(big_jpeg_bytes())
+            connection.root()["image"] = image
+            transaction.commit()
+
+            set_source_derivative(image, max_edge=1000)
+
+            # This is the backfill's case, and the one where the recorded
+            # ids can actually catch an in-place `image.data = ...`.
+            assert image._pgthumbor_source_info["source_ids"] == get_blob_ids(image)
+
+    def test_an_uncommitted_original_records_none(self, monkeypatch):
+        from plone.pgthumbor.derivative import set_source_derivative
+        from tests.conftest import namedfile_storables
+
+        _configured(monkeypatch)
+        with namedfile_storables():
+            image = _named_image(big_jpeg_bytes())
+            set_source_derivative(image, max_edge=1000)
+
+            # None means "not comparable", not "mismatched".  A new upload
+            # has no committed identity yet, and the URL builder must treat
+            # that as "no evidence of mutation" rather than as a mismatch —
+            # otherwise every freshly uploaded image would permanently
+            # refuse to use the derivative it just generated.
+            assert image._pgthumbor_source_info["source_ids"] is None
+
+
+def _explode(self):
+    raise AssertionError("source bytes must be read through open(), not .data")
+
+
+class TestTriggerIsEvaluatedBeforeDrafting:
+    """Regression: the trigger must see the source size, not the draft.
+
+    ``_draft_target`` picks the largest power of two that keeps the result
+    at or above the cap, so for any original whose longest edge is exactly
+    cap x 2, x 4 or x 8 the drafted image lands *on* the cap.  Evaluating
+    ``_needs_derivative`` after that made ``max(size) > max_edge`` false and
+    dropped the derivative for exactly the images that need one.
+    """
+
+    def test_an_original_at_exactly_twice_the_cap_still_gets_one(self):
+        from plone.pgthumbor.derivative import build_derivative_bytes
+
+        # 2400 / 2 == 1200 == the cap.
+        result = build_derivative_bytes(big_jpeg_bytes(size=(2400, 1800)), 1200)
+
+        assert result is not None
+        assert _open(result[0]).size == (1200, 900)
+
+    def test_an_original_at_exactly_four_times_the_cap_still_gets_one(self):
+        from plone.pgthumbor.derivative import build_derivative_bytes
+
+        result = build_derivative_bytes(big_jpeg_bytes(size=(2400, 1800)), 600)
+
+        assert result is not None
+        assert _open(result[0]).size == (600, 450)

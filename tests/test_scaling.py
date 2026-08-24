@@ -1896,3 +1896,117 @@ class TestImageSize:
         )
 
         assert "10x10:20x20" not in url
+
+
+class TestSrcsetUpscaleClamp:
+    """srcset must not offer a candidate the source cannot satisfy.
+
+    The back-fill entry is the sharp case.  ``srcset`` adds an entry at the
+    original's dimensions whenever no configured scale covers them, which
+    for an 11811 px print original is always.  Today that entry fails
+    loudly with a Thumbor 400.  Once the source is a 4000 px derivative it
+    would *succeed*, because MAX_PIXELS guards the source and not the
+    output: Thumbor would upscale to 11811 px, allocate hundreds of
+    megabytes in a pod limited to 1536Mi, and hand browsers a
+    multi-megabyte candidate.  Turning a visible failure into an invisible
+    one is worse than leaving it broken.
+    """
+
+    def _make_view(
+        self, monkeypatch, derivative=None, sizes=None, original=(11811, 8858)
+    ):
+        from plone.namedfile.scaling import ImageScaling
+        from plone.pgthumbor.scaling import ThumborImageScaling
+
+        _setup_env(monkeypatch)
+        ctx = MagicMock()
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        ctx.Title.return_value = "Doc"
+        ctx.image = _mock_image_data(
+            width=original[0], height=original[1], derivative=derivative
+        )
+        view = ThumborImageScaling(ctx, MagicMock())
+        monkeypatch.setattr(
+            ImageScaling,
+            "available_sizes",
+            sizes
+            if sizes is not None
+            else {"preview": (400, 400), "large": (800, 800)},
+            raising=False,
+        )
+        view.getImageSize = lambda fieldname: original
+        return view
+
+    def _requested_widths(self, view):
+        widths = []
+
+        def fake_scale(fieldname=None, scale=None, height=None, width=None, **kw):
+            if width is not None:
+                widths.append(width)
+            fake = MagicMock()
+            fake.url = f"{SERVER}/signed/{width or scale}/42/ff"
+            fake.width = width or 400
+            fake.height = height or 300
+            return fake
+
+        view.scale = MagicMock(side_effect=fake_scale)
+        return widths
+
+    def test_the_backfill_entry_is_dropped_rather_than_upscaled(self, monkeypatch):
+        view = self._make_view(
+            monkeypatch, derivative=_mock_derivative(size=(4000, 2999))
+        )
+        widths = self._requested_widths(view)
+
+        view.srcset(fieldname="image", scale_in_src="preview")
+
+        assert 11811 not in widths
+
+    def test_the_backfill_entry_survives_without_a_derivative(self, monkeypatch):
+        # Behaviour for an unprocessed image must be exactly as before.
+        view = self._make_view(monkeypatch, original=(100, 80))
+        widths = self._requested_widths(view)
+
+        view.srcset(fieldname="image", scale_in_src="preview")
+
+        assert 100 in widths
+
+    def test_the_backfill_entry_survives_when_the_derivative_matches(self, monkeypatch):
+        # A colour-space-only trigger leaves the dimensions alone, so the
+        # original-size entry is still satisfiable.
+        view = self._make_view(
+            monkeypatch,
+            original=(100, 80),
+            derivative=_mock_derivative(size=(100, 80)),
+        )
+        widths = self._requested_widths(view)
+
+        view.srcset(fieldname="image", scale_in_src="preview")
+
+        assert 100 in widths
+
+    def test_no_configured_scale_wider_than_the_derivative_is_offered(
+        self, monkeypatch
+    ):
+        view = self._make_view(
+            monkeypatch,
+            derivative=_mock_derivative(size=(4000, 2999)),
+            sizes={"preview": (400, 400), "huge": (6000, 6000)},
+        )
+        widths = self._requested_widths(view)
+
+        view.srcset(fieldname="image", scale_in_src="preview")
+
+        assert 6000 not in widths
+        assert 400 in widths
+
+    def test_scales_within_the_derivative_are_still_offered(self, monkeypatch):
+        view = self._make_view(
+            monkeypatch, derivative=_mock_derivative(size=(4000, 2999))
+        )
+        widths = self._requested_widths(view)
+
+        view.srcset(fieldname="image", scale_in_src="preview")
+
+        assert 400 in widths
+        assert 800 in widths

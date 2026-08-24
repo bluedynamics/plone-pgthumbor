@@ -103,6 +103,32 @@ def _needs_auth_url(
         return True  # fail safe → use auth URL
 
 
+def _select_source(data):
+    """The field value a Thumbor URL should name: derivative, or original.
+
+    Callers that go on to *emit* a URL must also translate the crop into
+    the selected source's coordinates.  ``_build_thumbor_url`` does both,
+    in that order, and is the only place that should — this helper exists
+    because ``srcset`` needs the same answer to decide which candidates it
+    can satisfy, and duplicating the rule there would let the two drift.
+    """
+    derivative = getattr(data, "_pgthumbor_source", None)
+    if derivative is None:
+        return data
+    info = getattr(data, "_pgthumbor_source_info", None)
+    recorded = info.get("source_ids") if isinstance(info, dict) else None
+    # None means "not comparable", not "mismatched".  A derivative
+    # generated before its original was committed has no ids to record, and
+    # reading that as a mismatch would make every freshly uploaded image
+    # permanently refuse the derivative it just generated.  Where ids *were*
+    # recorded, a difference means the original was mutated in place —
+    # NamedBlobImage.data is a settable property and migration scripts use
+    # it — so the derivative is stale.
+    if recorded is None or recorded == get_blob_ids(data):
+        return derivative
+    return data
+
+
 def _image_size(image):
     """``(width, height)`` for a field value, or None when unknowable."""
     try:
@@ -179,23 +205,7 @@ def _build_thumbor_url(context, data, width, height, mode, crop=None):
     if cfg is None:
         return None
 
-    # Source selection.  This has to stay in this function, next to the
-    # crop translation below: split apart, the next caller that picks a
-    # source and forgets to rescale the crop is one refactor away.
-    source = data
-    derivative = getattr(data, "_pgthumbor_source", None)
-    if derivative is not None:
-        info = getattr(data, "_pgthumbor_source_info", None)
-        recorded = info.get("source_ids") if isinstance(info, dict) else None
-        # None means "not comparable", not "mismatched".  A derivative
-        # generated before its original was committed has no ids to record,
-        # and reading that as a mismatch would make every freshly uploaded
-        # image permanently refuse the derivative it just generated.  Where
-        # ids *were* recorded, a difference means the original was mutated
-        # in place — NamedBlobImage.data is a settable property and
-        # migration scripts use it — so the derivative is stale.
-        if recorded is None or recorded == get_blob_ids(data):
-            source = derivative
+    source = _select_source(data)
 
     blob_ids = get_blob_ids(source)
     if blob_ids is None:
@@ -482,6 +492,15 @@ class ThumborImageScaling(ImageScaling):
         if not original_width or not original_height:
             return None
 
+        # Never offer a candidate the selected source cannot satisfy.
+        # Thumbor's MAX_PIXELS guards the source, not the output, so a
+        # request above the derivative succeeds by upscaling rather than
+        # failing — which is how a loud 400 becomes a silent multi-megabyte
+        # candidate.  Dimensions reported to Plone still come from the
+        # original; only the list of offered widths changes.
+        source_size = _image_size(_select_source(data))
+        widest = min(original_width, source_size[0]) if source_size else original_width
+
         srcset_urls = []
 
         # Back-fill an original-size entry when no configured scale
@@ -489,7 +508,7 @@ class ThumborImageScaling(ImageScaling):
         # undersized original still yields a non-empty srcset. The URL
         # always comes from a scale view, never a bare uid string.
         available_widths = [width for (width, _height) in self.available_sizes.values()]
-        if original_width not in available_widths:
+        if original_width not in available_widths and original_width <= widest:
             scale_view = self.scale(
                 fieldname=fieldname,
                 width=original_width,
@@ -501,7 +520,7 @@ class ThumborImageScaling(ImageScaling):
                 srcset_urls.append(f"{scale_view.url} {scale_view.width}w")
 
         for _name, (width, height) in self.available_sizes.items():
-            if width <= original_width:
+            if width <= widest:
                 scale_view = self.scale(
                     fieldname=fieldname,
                     width=width,

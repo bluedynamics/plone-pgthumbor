@@ -2,6 +2,124 @@
 
 ## 0.6.6 (unreleased)
 
+- Add Thumbor source derivatives. Thumbor refuses images above its `MAX_PIXELS`
+  limit (75 MP by default) and answers HTTP 400 after several seconds of work, so
+  print-resolution originals never rendered at all; it also fetched the *whole*
+  original on every cache miss, a 40 MB blob crossing the network and the decoder
+  to produce a 3 KB listing thumbnail. Plone now stores a capped,
+  sRGB-normalised second `NamedBlobImage` on the original field value, as
+  `_pgthumbor_source`, and every Thumbor URL addresses that blob instead. The
+  original is never modified and `@@download` still serves it byte for byte.
+  Pillow becomes a direct dependency: it runs once per image on write, never on
+  the request path, where `ThumborScaleStorage` still looks up no
+  `IImageScaleFactory` and `tests/test_storage.py::test_no_pillow_invoked` still
+  holds.
+  Closes [#25](https://github.com/bluedynamics/plone-pgthumbor/issues/25).
+
+  New setting `PGTHUMBOR_SOURCE_MAX_EDGE`, registry field `source_max_edge`,
+  default 4000 pixels. `0` disables generation entirely, and values above `8000`
+  are clamped on read rather than trusted, because a registry record written
+  before the bound existed never revalidates and an env var bypasses validation
+  outright. The ceiling is arithmetic rather than taste: a longest edge of *E*
+  bounds the derivative at *E²* pixels, so above `sqrt(75e6)`, roughly 8660, a
+  derivative could reproduce the very HTTP 400 this removes, and it would do so
+  silently. The env lookup uses a `None` sentinel instead of the existing
+  falsiness-as-unset idiom, or the documented `0` kill switch would read as unset
+  and get overwritten by the registry default. The cap in force is recorded with
+  each derivative, so changing it later is an ordinary backfill run rather than a
+  migration. Profile version 4, with `upgrade_to_4` registering the record on
+  sites that already have the add-on.
+
+  A subscriber on `IObjectAddedEvent` and `IObjectModifiedEvent`, registered for
+  `IDexterityContent` and never for `*`, walks every schema and behaviour and
+  gives each `NamedBlobImage` field a derivative. Generation triggers on size or
+  on colour space (`CMYK`, `LAB`, the 16-bit integer modes, palette with
+  transparency), independently, because tying normalisation to size alone would
+  let a 3 MP CMYK press image through unconverted. SVG and animated GIFs are
+  skipped. One decode at a time per process, behind a bounded semaphore with a
+  short timeout: a print-resolution decode costs 79 to 105 MB of pixel buffer and
+  `IObjectModifiedEvent` can fan out across every worker thread. Every outcome is
+  recorded, including the ones that produced nothing, so failures stay
+  enumerable; a semaphore timeout and a failed decode are explicitly non-terminal
+  and get picked up again by an ordinary backfill run, with no `force` flag for
+  anyone to forget.
+
+  Source selection, crop translation and dimension clamping all land in
+  `_build_thumbor_url`, the package's single URL funnel, so all four call sites
+  get them at once. Crop boxes from `plone.app.imagecropping` are stored in the
+  original's pixels and are now rescaled onto the derivative with a factor per
+  axis and direction-aware rounding, and dropped when they degenerate. Requested
+  dimensions are clamped to the selected source, and `srcset` no longer offers a
+  candidate the source cannot satisfy: its original-width back-fill entry used to
+  fail loudly with a Thumbor 400, and against a 4000 px derivative it would have
+  started succeeding by scaling an 11811 px image up instead, which is a worse
+  outcome than the failure.
+
+  Keep source derivatives out of `Products.CMFEditions` version snapshots.
+  `CloneNamedFileBlobs` collects top-level field blobs only, so a nested
+  derivative went through the pickle and `ZODB.blob.Blob.__getstate__` returned
+  `None`: the snapshot held a `NamedBlobImage` that looked entirely valid and
+  read back zero bytes, and a revert produced a field value whose `(zoid, tid)`
+  resolved to an empty blob, which Thumbor answers with 400. A new
+  `ICloneModifier` drops both attributes on clone, not only the derivative, since
+  a terminal outcome record with no derivative would never regenerate. It is
+  registered into the persistent `portal_modifier` tool by a GenericSetup step
+  rather than by ZCML, so the profile goes to version 5 with `upgrade_to_5`: an
+  install-only handler would leave every existing site without it, and an
+  existing site is exactly the one this repairs. Both `Products.CMFEditions` and
+  its `portal_modifier` tool may be absent; both absences are logged and ignored,
+  because with no version repository there is nothing to protect.
+
+  New script `scripts/backfill_thumbor_sources.py` gives existing content its
+  derivatives. A keyset walk over `object_state` rather than a catalog walk (a
+  brain walk over the same population OOM-killed a production container during
+  the original scan), chunked, resumable, with a dry run that reports the numbers
+  a cap is chosen from: candidate count, median encoded derivative size, how many
+  field values will have their scale uids move, and which scale names actually
+  carry crops. Phase 2 re-indexes `image_scales` once the new blobs have
+  transaction ids, and it is not optional: the affected catalog rows hold direct,
+  signed Thumbor URLs that a browser fetches without Plone in the path, so uid
+  healing can never reach them and nothing improves until phase 2 has run.
+
+  Fix: `plone.pgthumbor.purge_scales` no longer blanks `image_scales`
+  site-wide. It called `makerequest`, which sets `app.REQUEST` but leaves
+  `zope.globalrequest.getRequest()` at `None`, and then re-indexed
+  `image_scales` for every object in the catalog. With no request the
+  `image_scales` indexer raises `AttributeError`, which is plone.indexer's
+  deliberate "do not index" signal; `plone.pgcatalog`'s `extract_idx` reads every
+  metadata column as `getattr(wrapper, name, None)` and the default swallows that
+  signal; the value becomes a plain `None` and is merged into the JSONB column as
+  an explicit `null`. The column was overwritten, not skipped. The new
+  `plone.pgthumbor.zconsole` module establishes a request carrying the browser
+  layer and refuses to let a script write unless a request exists, provides the
+  layer, and resolves `@@images` to `ThumborImageScaling`; the backfill uses the
+  same gate before its reindex phase.
+  Closes [#16](https://github.com/bluedynamics/plone-pgthumbor/issues/16).
+
+  Two limitations are accepted rather than fixed. A truncated source blob yields
+  a truncated derivative, grey where the scan data ran out, rather than no
+  derivative: `plone.scale` sets `PIL.ImageFile.LOAD_TRUNCATED_IMAGES = True`
+  process-wide at import, so Plone already renders those bytes that way, and a
+  package that replaces Plone's scaling should not judge the same bytes more
+  harshly than the scaling it replaces. And images above roughly 179 MP get no
+  derivative at all, because Pillow raises `DecompressionBombError` inside
+  `Image.open` before this package's own 175 MP ceiling can be consulted, and
+  raising `Image.MAX_IMAGE_PIXELS` from a worker thread would disable bomb
+  protection process-wide for every other decode in the process. Those images are
+  recorded as failures, so they stay enumerable, and they keep returning
+  Thumbor's 400.
+
+  Chore: `uv.lock` is now in `.gitignore`. The absent lockfile is deliberate, but
+  `uv run` writes one on every invocation and `check-added-large-files` caught it
+  at 527 KB. Note that a plain `uv run` also re-syncs the environment against
+  `pyproject.toml`, silently undoing a local `plone.namedfile < 8` pin; use
+  `UV_NO_SYNC=1 uv run pytest` when the pin matters.
+
+  Docs: new how-to guides for choosing the cap and for running the backfill, a
+  source derivatives section in the architecture explanation, and the "Pillow is
+  never imported, never invoked" claim scoped to the request path, where it stays
+  true.
+
 - Bump `hynek/build-and-inspect-python-package` from v2 to v3.0.1. Hatchling now
   emits `Metadata-Version: 2.5`, which the Twine bundled in v2 rejects with
   `InvalidDistribution: '2.5' is not a valid metadata version` — the release

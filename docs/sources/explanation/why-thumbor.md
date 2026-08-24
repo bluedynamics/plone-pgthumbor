@@ -204,9 +204,28 @@ With plone.pgthumbor installed, the image scaling pipeline changes fundamentally
 
 The `ThumborScaleStorage` ensures that Plone's `@@images` traversal still works
 -- it stores dimension metadata (width, height, uid) for `<img>` tag generation
-and catalog indexing, but never invokes Pillow or creates annotation objects.
+and catalog indexing, but never scales an image and never creates annotation
+objects.
 The `ThumborImageScale` view generates a signed Thumbor URL and returns a 302
 redirect instead of streaming image bytes.
+
+### Pillow keeps one job
+
+Every row of that table describes the request path, and on the request path
+plone.pgthumbor really does touch no pixels.
+Pillow has not left the Plone process, though, and since source derivatives
+landed the package declares it as a direct dependency and uses it.
+
+The work happens once per image, on write.
+When an image is added or edited, a subscriber builds a capped, sRGB-normalised
+copy of it and stores that beside the original, so Thumbor reads a web-sized,
+colour-corrected source instead of a print-resolution one.
+That is a bounded, one-off decode under a process-wide limit of one at a time,
+not the unbounded write-on-read described at the top of this page: it does not
+repeat per scale, it does not happen while a page is being rendered, and it does
+not write a persistent object per rendition.
+The source derivatives section of {doc}`architecture` has the mechanism, and
+{doc}`/how-to/choose-source-max-edge` covers choosing the cap.
 
 From the content editor's perspective, nothing changes.
 Images are uploaded through

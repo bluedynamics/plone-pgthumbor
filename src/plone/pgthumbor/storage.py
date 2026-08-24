@@ -1,9 +1,14 @@
-"""Thumbor scale storage — no Pillow, no image data, no ZODB writes.
+"""Thumbor scale storage — no scaling, no image data, no ZODB writes.
 
 Overrides AnnotationStorage to prevent any actual image scaling.
 Uses pre_scale() for everything — dimension computation only.
 The storage property returns a volatile (non-persistent) dict so that
 no ScalesDict objects are written to ZODB.
+
+Nothing here looks up ``IImageScaleFactory``, so no image bytes are decoded
+while a request is being served.  That is a statement about the request
+path, and only about it: since source derivatives landed, the package does
+declare and use Pillow, once per image on write.  See ``derivative.py``.
 
 The adapter factory ``thumbor_scale_storage_factory`` checks at runtime
 whether IPlonePgthumborLayer is active. If not (e.g. pgthumbor not
@@ -46,7 +51,9 @@ class ThumborScaleStorage(AnnotationStorage):
 
     In a Thumbor setup, all scaling is done by the Thumbor server.
     This storage only stores dimension metadata (uid, width, height)
-    for catalog metadata and img tag generation. No Pillow is invoked.
+    for catalog metadata and img tag generation.  No image is scaled here
+    and ``IImageScaleFactory`` is never looked up, so serving a page decodes
+    no pixels.
 
     The ``storage`` property returns a plain dict instead of a
     PersistentMapping/ScalesDict, so no ZODB write transactions are
@@ -209,8 +216,10 @@ class ThumborScaleStorage(AnnotationStorage):
         return info
 
     def generate_scale(self, uid=None, **parameters):
-        """Override to prevent Pillow invocation.
+        """Override so that no scale is ever generated on read.
 
-        Delegates to pre_scale which only computes dimensions.
+        Delegates to pre_scale which only computes dimensions.  The source
+        derivative built on write (``derivative.py``) is the package's only
+        image processing, and it never runs from here.
         """
         return self.pre_scale(**parameters)

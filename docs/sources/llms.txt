@@ -11,19 +11,26 @@
 - 3-segment authenticated URLs for non-public content (auth handler calls Plone REST service)
 - Smart focal point detection via Thumbor
 - S3 fallback for tiered blob storage
-- Zero Pillow dependency in Plone process
+- Source derivative: capped, sRGB-normalised second NamedBlobImage stored on the original field value
+  (_pgthumbor_source), so Thumbor never reads a print-resolution original; cap is PGTHUMBOR_SOURCE_MAX_EDGE
+  (default 4000, 0 disables, clamped at 8000)
+- Pillow is a direct dependency and runs on write only (subscriber builds the derivative on add/modify);
+  the request path still decodes no pixels and never calls IImageScaleFactory
 - Zero ZODB write-on-read for image scales
 
 ## Architecture
 
 Browser -> Plone (302 redirect with signed Thumbor URL)
 Browser -> Thumbor (scale + cache + serve)
-Thumbor -> PostgreSQL blob_state (or S3 fallback)
+Thumbor -> PostgreSQL blob_state (or S3 fallback), addressing the derivative blob when one exists
 Thumbor -> Plone @thumbor-auth REST service (for non-public content)
+Plone on add/modify -> derivative.py (Pillow decode, sRGB, cap) -> second blob on the field value
 
 ## Documentation sections
 
 - Tutorials: quickstart-docker
-- How-to: install, configure-thumbor, configure-plone, deploy-production, enable-s3-fallback
+- How-to: install, configure-thumbor, configure-plone, choose-source-max-edge, deploy-production,
+  enable-s3-fallback, integrate-imagecropping, write-crop-provider, purge-legacy-scales,
+  backfill-source-derivatives, develop, release
 - Reference: configuration, url-format, rest-api, changelog
 - Explanation: architecture, security, why-thumbor, cloud-native

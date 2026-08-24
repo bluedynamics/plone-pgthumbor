@@ -41,6 +41,7 @@ variables override these values when set.
 `server_url`, `security_key` and `unsafe` are not registry fields.
 They are configured through environment variables only, and the records were removed by the profile upgrade to version 3.
 
+(choosing-a-source-derivative-cap)=
 ### Choosing a source derivative cap
 
 The default of `4000` is a safe starting point for a site nobody has measured.

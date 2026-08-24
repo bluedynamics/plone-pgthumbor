@@ -27,6 +27,19 @@ except ImportError:  # pragma: no cover - littlecms is optional in some builds
 
 logger = logging.getLogger(__name__)
 
+if ImageCms is None:  # pragma: no cover - depends on the Pillow build
+    # Say so once per process rather than degrade quietly.  Stock Pillow
+    # wheels bundle liblcms2 on every platform, and so does the
+    # plone/plone-backend image, so this only fires where Pillow was built
+    # from source without liblcms2-dev.  Derivatives still work; CMYK just
+    # goes through convert(), whose naive 255-minus-ink formula shifts
+    # press colours noticeably.
+    logger.warning(
+        "PIL.ImageCms is unavailable — this Pillow build has no littlecms. "
+        "Thumbor source derivatives will fall back to a plain colour "
+        "conversion, which is measurably wrong for CMYK press material."
+    )
+
 
 # Duplicated from ``scaling._SKIP_THUMBOR_TYPES`` on purpose, so this module
 # stays free of the scaling import and can be reasoned about on its own.

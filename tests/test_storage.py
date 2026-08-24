@@ -281,6 +281,32 @@ class TestHealByHashMatch:
 
         assert "scale" not in recorded
 
+    def test_original_size_not_called_when_a_registry_candidate_matches(self):
+        """Finding 2: NamedBlobImage.getImageSize() lazily assigns
+        ``_width``/``_height`` on a Persistent object, registering it with
+        the transaction. ``_match_candidate`` must not call
+        ``_original_size`` before it is known that no registry-derived
+        candidate will match -- the common case, and reachable by an
+        unauthenticated GET with an attacker-chosen uid."""
+        minting, healing = self._storages()
+        uid = minting.hash_key(
+            fieldname="image", width=400, height=200, mode="scale", scale="Haeuser"
+        )
+
+        with (
+            patch.object(healing, "pre_scale", return_value={"uid": uid, "data": None}),
+            patch.object(healing, "_mint_time", return_value=self.MINT_TIME),
+            patch.object(healing, "_original_size") as mock_original_size,
+            patch(
+                "plone.pgthumbor.storage.registered_scales",
+                return_value=(("Haeuser", 400, 200),),
+            ),
+        ):
+            result = healing.get_or_generate(uid)
+
+        assert result is not None
+        mock_original_size.assert_not_called()
+
     def test_recovers_the_original_size_download_entry(self):
         minting, healing = self._storages()
         uid = minting.hash_key(

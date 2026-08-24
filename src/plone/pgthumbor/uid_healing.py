@@ -87,8 +87,16 @@ def candidate_parameters(fieldname, dimension, scales, original_size=None):
     plone.namedfile's own ``srcset()`` passes no ``scale`` key at all.  Missing
     that splits exactly the ``0:H`` and ``W:0`` scales this fix exists for.
 
-    *original_size* is the field value's ``getImageSize()`` or None.  It covers
-    the "download" entry, which is minted at the original's dimensions.
+    *original_size* is an optional zero-argument callable returning the
+    field value's ``getImageSize()`` result, or None.  It covers the
+    "download" entry, which is minted at the original's dimensions.  It is a
+    callable, not a plain value, so it can stay unevaluated: calling it can
+    lazily load the whole blob and, on a ``Persistent`` field value, assign
+    ``_width``/``_height`` as a side effect -- which registers a ZODB write.
+    It is invoked at most once, and only once every registry-derived
+    candidate above has already been tried without a match.  A None result
+    (empty field, unreadable image) is tolerated like a None callable: that
+    last candidate is simply skipped.
     """
     for name, width, height in scales:
         if width != dimension:
@@ -129,13 +137,15 @@ def candidate_parameters(fieldname, dimension, scales, original_size=None):
             yield {**base, "scale": None}
             yield dict(base)
 
-    if original_size and original_size[0] == dimension:
-        orig_width, orig_height = original_size
-        for mode in SCALE_MODES:
-            yield {
-                "fieldname": fieldname,
-                "width": orig_width,
-                "height": orig_height,
-                "mode": mode,
-                "scale": None,
-            }
+    if original_size is not None:
+        size = original_size()
+        if size and size[0] == dimension:
+            orig_width, orig_height = size
+            for mode in SCALE_MODES:
+                yield {
+                    "fieldname": fieldname,
+                    "width": orig_width,
+                    "height": orig_height,
+                    "mode": mode,
+                    "scale": None,
+                }

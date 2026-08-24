@@ -180,9 +180,13 @@ For every `(name, w, h)` with `w == dimension`, crossed with the modes:
 - additionally when `original_size[0] == dimension`: the original's dimensions — the
   `download` entry minted by `ImageFieldScales.get_original_image_url`
 
-`original_size` is the field value's `getImageSize()`. When the field is empty or the
-value is unreadable it is `None` and that last candidate is skipped; every other
-candidate is unaffected.
+`original_size` is a zero-argument callable returning the field value's
+`getImageSize()`, consulted only once the registry-derived candidates above are
+exhausted without a match: calling it can load the whole blob and, on a Persistent field
+value, lazily assign its width/height as a side effect, which registers a ZODB write —
+nothing on this path may do that before it is known to be necessary. When the field is
+empty or the value is unreadable the callable returns `None` and that last candidate is
+skipped; every other candidate is unaffected.
 
 Modes: the three canonical ones plus every alias `get_scale_mode` accepts (`keep`,
 `thumbnail`, `down`, `up`, `scale-crop-to-fit`, `scale-crop-to-fill`, `None`).

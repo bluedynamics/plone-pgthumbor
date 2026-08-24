@@ -44,6 +44,15 @@
   healing could not tell them apart and previously assumed the uncropped
   one.
 
+- Fix: healing no longer reads the field's image size before any candidate
+  is hashed. `NamedBlobImage.getImageSize()` lazily assigns
+  `_width`/`_height` on first call, which registers a ZODB write on a
+  `Persistent` object — reachable by an unauthenticated GET with an
+  attacker-chosen uid. `_original_size` is now consulted only once every
+  registry-derived candidate has already failed to match, which is also
+  the common case, so the successful healing path no longer computes the
+  image size twice either.
+
 - Fix: the scale mode now reaches the generated Thumbor URL. `plone.scale`
   keeps `mode` in `info["key"]` and never copies it into the info dict, so
   `info.get("mode", "scale")` always read `"scale"` and every URL was built

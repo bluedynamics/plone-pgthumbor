@@ -120,10 +120,18 @@ class ThumborScaleStorage(AnnotationStorage):
             return None
 
     def _match_candidate(self, uid, fieldname, dimension, scales):
-        """Return the parameters whose hash_key equals *uid*, or None."""
-        original_size = self._original_size(fieldname)
+        """Return the parameters whose hash_key equals *uid*, or None.
+
+        *original_size* is passed as a callable, not a value: computing it
+        can load the whole blob and, on a Persistent field value, lazily
+        assign its width/height, which registers a ZODB write
+        (``NamedBlobImage.getImageSize``). Nothing on this path may write to
+        ZODB, and it is reachable by an unauthenticated GET with an
+        attacker-chosen uid, so the field must stay untouched unless every
+        registry-derived candidate has already failed to match.
+        """
         for parameters in candidate_parameters(
-            fieldname, dimension, scales, original_size
+            fieldname, dimension, scales, lambda: self._original_size(fieldname)
         ):
             if self.hash_key(**parameters) == uid:
                 return parameters

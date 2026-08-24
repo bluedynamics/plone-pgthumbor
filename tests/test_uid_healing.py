@@ -174,24 +174,73 @@ class TestCandidateParameters:
         assert all(c["width"] in (400, None) for c in candidates)
 
     def test_original_size_candidate_when_width_matches(self):
-        """The image_scales "download" entry is minted at the original size."""
-        candidates = self._candidates("image", 900, (), original_size=(900, 600))
+        """The image_scales "download" entry is minted at the original size.
+
+        *original_size* is a zero-argument callable (finding 2): calling it
+        can lazily load the field's image data, so it must be deferred
+        until it is actually needed rather than computed up front by the
+        caller."""
+        candidates = self._candidates(
+            "image", 900, (), original_size=lambda: (900, 600)
+        )
 
         assert candidates
         assert all((c["width"], c["height"]) == (900, 600) for c in candidates)
 
     def test_original_size_ignored_when_width_differs(self):
-        candidates = self._candidates("image", 400, (), original_size=(900, 600))
+        candidates = self._candidates(
+            "image", 400, (), original_size=lambda: (900, 600)
+        )
 
         assert candidates == []
 
     def test_no_original_size_is_tolerated(self):
-        """Empty field or unreadable image: every other candidate survives."""
+        """No callable at all: every other candidate survives."""
         candidates = self._candidates(
             "image", 400, (("Haeuser", 400, 200),), original_size=None
         )
 
         assert candidates
+
+    def test_original_size_callable_returning_none_is_tolerated(self):
+        """Empty field or unreadable image: the callable itself may return
+        None, and every other candidate must still survive."""
+        candidates = self._candidates(
+            "image", 400, (("Haeuser", 400, 200),), original_size=lambda: None
+        )
+
+        assert candidates
+
+    def test_original_size_not_invoked_while_a_registry_candidate_remains(self):
+        """Finding 2: *original_size* is a callable precisely so it can stay
+        unevaluated. Consuming the generator the way ``_match_candidate``
+        does -- stopping at the first match -- must never reach the
+        callable when a registry-derived candidate already matches, which
+        is the common case. (The other tests in this class use ``list()``
+        via ``_candidates``, which always exhausts the generator and so
+        cannot show this.)"""
+        from plone.pgthumbor.uid_healing import candidate_parameters
+
+        calls = []
+
+        def get_original_size():
+            calls.append(1)
+            return (400, 200)
+
+        target = {
+            "fieldname": "image",
+            "width": 400,
+            "height": 200,
+            "mode": "scale",
+            "scale": "Haeuser",
+        }
+        for parameters in candidate_parameters(
+            "image", 400, (("Haeuser", 400, 200),), get_original_size
+        ):
+            if parameters == target:
+                break
+
+        assert calls == []
 
     def test_fieldname_is_threaded_through(self):
         candidates = self._candidates("my-logo-field", 400, (("Haeuser", 400, 200),))

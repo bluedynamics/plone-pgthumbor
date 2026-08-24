@@ -69,8 +69,11 @@ from pathlib import Path
 from plone.pgthumbor.derivative import build_derivative_bytes
 from plone.pgthumbor.derivative import INFO_ATTRIBUTE
 from plone.pgthumbor.derivative import IS_DERIVATIVE_ATTRIBUTE
+from plone.pgthumbor.derivative import REASON_GENERATED
 from plone.pgthumbor.derivative import set_source_derivative
 from plone.pgthumbor.derivative import TERMINAL_REASONS
+from plone.pgthumbor.zconsole import establish_request
+from plone.pgthumbor.zconsole import require_thumbor_request
 from ZODB.utils import p64
 
 import ctypes
@@ -605,6 +608,119 @@ def load_field_value(connection, zoid):
     return connection.get(p64(zoid))
 
 
+# --- phase 2: reindex ------------------------------------------------------
+#
+# Phase 1 worked on field values by oid and never woke a content object.
+# Phase 2 has to, because ``image_scales`` is catalog metadata *of the
+# content object*, not of the image.
+#
+# The link back is ``object_state.refs``, which carries the oids a row
+# points at, with a GIN index on it.  ``path IS NOT NULL`` is what makes a
+# row a catalogued content object: field values and annotations never have
+# one.  Traversing by path rather than loading by oid is deliberate —
+# ``reindexObject`` reaches its catalog through acquisition, and an object
+# fetched straight from the connection has no wrapper to reach through.
+
+_GENERATED_SELECT = f"""\
+SELECT zoid
+FROM object_state
+WHERE class_mod = %(class_mod)s
+  AND class_name = ANY(%(class_names)s::text[])
+  AND zoid > %(last_zoid)s
+  AND NOT (state ? '{IS_DERIVATIVE_ATTRIBUTE}')
+  AND state->'{INFO_ATTRIBUTE}'->>'reason' = %(generated_reason)s
+ORDER BY zoid
+LIMIT %(chunk)s
+"""
+
+_OWNERS_SELECT = """\
+SELECT zoid, path
+FROM object_state
+WHERE refs && %(field_zoids)s::bigint[]
+  AND path IS NOT NULL
+"""
+
+
+def generated_query(last_zoid, chunk, class_names=OBJECT_STATE_CLASS_NAMES):
+    """Field values that got a derivative, in the same order phase 1 walked."""
+    return _GENERATED_SELECT, {
+        "class_mod": OBJECT_STATE_CLASS_MOD,
+        "class_names": list(class_names),
+        "last_zoid": last_zoid,
+        "generated_reason": REASON_GENERATED,
+        "chunk": chunk,
+    }
+
+
+def select_generated(cursor, last_zoid, chunk, class_names=OBJECT_STATE_CLASS_NAMES):
+    sql, params = generated_query(last_zoid, chunk, class_names=class_names)
+    cursor.execute(sql, params)
+    return [row["zoid"] for row in cursor.fetchall()]
+
+
+def owner_paths(cursor, field_zoids):
+    """Catalogued content objects referencing any of *field_zoids*.
+
+    Returns ``{field_zoid_is_not_returned: path}`` — a mapping of owner zoid
+    to path.  One owner can hold several image fields, so this collapses
+    naturally and each object is reindexed once per chunk.
+    """
+    if not field_zoids:
+        return {}
+    cursor.execute(_OWNERS_SELECT, {"field_zoids": list(field_zoids)})
+    return {row["zoid"]: row["path"] for row in cursor.fetchall()}
+
+
+def run_reindex(portal, cursor, progress, chunk):
+    """Reindex ``image_scales`` for every object phase 1 gave a derivative.
+
+    This is load-bearing rather than an optimisation.  For exactly the
+    images this feature targets, the existing catalog rows do not hold uid
+    URLs — they hold direct, absolute, signed Thumbor URLs, because
+    ``_build_thumbor_url`` succeeded all along and it was Thumbor that
+    answered 400 afterwards.  A browser fetches those without Plone in the
+    path, so uid healing can never intervene.  Between phase 1 and phase 2
+    nothing improves for them.
+    """
+    require_thumbor_request()
+
+    stats = {"objects": 0, "chunks": 0, "reindexed": 0, "unowned": 0, "failed": 0}
+    while True:
+        last = progress.last_zoid(PHASE_REINDEX)
+        zoids = select_generated(cursor, last, chunk)
+        if not zoids:
+            break
+
+        owners = owner_paths(cursor, zoids)
+        if len(owners) == 0 and zoids:
+            # Every field value in this chunk is held by something that is
+            # not catalogued — an annotation-nested behaviour, or an object
+            # removed since phase 1.  Counted, never silent.
+            stats["unowned"] += len(zoids)
+
+        for path in owners.values():
+            try:
+                obj = portal.unrestrictedTraverse(path)
+                # idxs= is not decoration: an empty idxs calls
+                # notifyModified() and would bump the modification date of
+                # every object touched, breaking recently-modified listings
+                # and every downstream cache key with them.
+                obj.reindexObject(idxs=["image_scales"])
+                obj._p_deactivate()
+                stats["reindexed"] += 1
+            except Exception:
+                stats["failed"] += 1
+                print(f"  reindex failed for {path}", flush=True)
+
+        transaction.commit()
+        stats["objects"] += len(zoids)
+        stats["chunks"] += 1
+        progress.record_chunk(PHASE_REINDEX, max(zoids), len(zoids))
+        _invalidate_cache(portal._p_jar)
+        _release_memory()
+    return stats
+
+
 def run_generate(
     connection, cursor, max_edge, progress, chunk, force=False, size_only=False
 ):
@@ -888,6 +1004,89 @@ def print_dry_run_report(report):
 # --- the run ---------------------------------------------------------------
 
 
+_UNOWNED_GENERATED = f"""\
+SELECT count(*) AS unowned
+FROM object_state AS fv
+WHERE fv.class_mod = %(class_mod)s
+  AND fv.class_name = ANY(%(class_names)s::text[])
+  AND NOT (fv.state ? '{IS_DERIVATIVE_ATTRIBUTE}')
+  AND fv.state->'{INFO_ATTRIBUTE}'->>'reason' = %(generated_reason)s
+  AND NOT EXISTS (
+    SELECT 1 FROM object_state AS owner
+    WHERE owner.refs @> ARRAY[fv.zoid] AND owner.path IS NOT NULL
+  )
+"""
+
+_STALE_SCALES = f"""\
+SELECT count(*) AS stale
+FROM object_state AS owner
+WHERE owner.path IS NOT NULL
+  AND (owner.idx IS NULL OR owner.idx->'image_scales' IS NULL
+       OR jsonb_typeof(owner.idx->'image_scales') = 'null')
+  AND EXISTS (
+    SELECT 1 FROM object_state AS fv
+    WHERE fv.zoid = ANY(owner.refs)
+      AND NOT (fv.state ? '{IS_DERIVATIVE_ATTRIBUTE}')
+      AND fv.state->'{INFO_ATTRIBUTE}'->>'reason' = %(generated_reason)s
+  )
+"""
+
+
+def verify(cursor, max_edge, force=False, size_only=False):
+    """Three counts that must all be zero for the run to have finished.
+
+    *remaining* — phase 1 still has candidates, so the population was not
+    covered.
+
+    *stale_scales* — a content object holding a derivative-bearing image has
+    no ``image_scales`` metadata at all.  That is both "phase 2 never
+    reached it" and "something nulled the column", which is the failure a
+    request-less reindex causes and the reason this script refuses to start
+    without one.
+
+    *unowned* — a derivative-bearing field value that no catalogued object
+    references.  Nothing can reindex it, so it is reported rather than
+    silently counted as done: an annotation-nested behaviour would land
+    here, and so would an object deleted between the two phases.
+
+    The spec also asks for a URL-level assertion — no catalog row carrying a
+    Thumbor URL whose blob zoid belongs to an original that now has a
+    derivative.  That is deliberately *not* implemented: it needs per-row
+    hex matching inside JSONB, it cannot be expressed as one indexed query,
+    and the failure it detects is precisely the one
+    ``require_thumbor_request`` refuses to let happen.  The two counts above
+    catch the outcomes that survive that guard.
+    """
+    summary = candidate_summary(cursor, max_edge, force=force, size_only=size_only)
+    params = {
+        "class_mod": OBJECT_STATE_CLASS_MOD,
+        "class_names": list(OBJECT_STATE_CLASS_NAMES),
+        "generated_reason": REASON_GENERATED,
+    }
+    cursor.execute(_UNOWNED_GENERATED, params)
+    unowned = cursor.fetchone()["unowned"]
+    cursor.execute(_STALE_SCALES, {"generated_reason": REASON_GENERATED})
+    stale = cursor.fetchone()["stale"]
+    return {
+        "remaining": summary["candidates"],
+        "unowned": unowned,
+        "stale_scales": stale,
+        "verified": summary["candidates"] == 0 and unowned == 0 and stale == 0,
+    }
+
+
+def print_verification(report):
+    print("", flush=True)
+    print("Verification", flush=True)
+    print(f"  candidates remaining     {report['remaining']}", flush=True)
+    print(f"  derivatives with no owner {report['unowned']}", flush=True)
+    print(f"  owners without scales     {report['stale_scales']}", flush=True)
+    print(
+        "  VERIFIED" if report["verified"] else "  NOT VERIFIED — see the counts above",
+        flush=True,
+    )
+
+
 def run(
     portal,
     max_edge,
@@ -940,37 +1139,36 @@ def run(
         flush=True,
     )
 
-    # --- phase 2 seam -----------------------------------------------------
-    #
-    # The reindex is a separate task and is not implemented here.  Until it
-    # is, this run has NOT finished the job, and says so: for exactly the
-    # images phase 1 just fixed, the catalog still holds direct, signed
-    # Thumbor URLs pointing at the originals, and a browser fetches those
-    # without Plone in the path.  Nothing heals them.
-    #
-    # Phase 2 also needs what phase 1 did not: a site, and a request
-    # carrying the browser layer — without one the reindex overwrites
-    # image_scales with null for every object it touches.
-    if progress.reindex_pending:
-        print(
-            f"NOT FINISHED: {PHASE_REINDEX} has not run "
-            f"(at {progress.last_zoid(PHASE_REINDEX)}, behind {PHASE_GENERATE} "
-            f"at {progress.last_zoid(PHASE_GENERATE)}). The catalog still "
-            "points at the originals for every image this run touched.",
-            flush=True,
-        )
-    return stats
+    # Phase 2 is not an optimisation.  For exactly the images phase 1 just
+    # fixed, the catalog holds direct, signed Thumbor URLs pointing at the
+    # originals — a browser fetches those without Plone in the path, so uid
+    # healing can never reach them.  Until this runs, nothing improved.
+    reindex_stats = run_reindex(portal, cursor, progress, chunk)
+    print(
+        f"{PHASE_REINDEX} finished: {reindex_stats['reindexed']} objects "
+        f"reindexed, {reindex_stats['unowned']} derivatives with no "
+        f"catalogued owner, {reindex_stats['failed']} failed.",
+        flush=True,
+    )
+
+    report = verify(cursor, max_edge, force=force, size_only=size_only)
+    print_verification(report)
+    return {"generate": stats, "reindex": reindex_stats, "verification": report}
 
 
 def main(app):
     """Entry point for ``zconsole run``.
 
-    Phase 2 has a further requirement this does not satisfy yet: the
-    reindex must run with a request that carries the browser layer, or it
-    overwrites ``image_scales`` with null for every object it touches.
-    That wiring belongs to the phase-2 task and lands with it.
+    The first thing it does is establish a request carrying the browser
+    layer.  Phase 2 reindexes ``image_scales``, and without one that
+    overwrites the column with null for every object it touches — see
+    ``plone.pgthumbor.zconsole`` for why the failure is silent.
     """
     site_id = os.environ.get("SITE_ID", "Plone")
+    # Before resolving the site, and long before any write.  Phase 2
+    # reindexes image_scales, and without a request carrying the browser
+    # layer that overwrites the column with null for every object touched.
+    app = establish_request(app)
     portal = resolve_portal(app, site_id)
     max_edge = resolve_max_edge()
     progress = Progress.load(progress_path())

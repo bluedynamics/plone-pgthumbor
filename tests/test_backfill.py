@@ -808,25 +808,47 @@ class TestPhaseOneLoadsFieldValuesDirectly:
 
         assert run.connection.loaded == [3, 9]
 
-    def test_no_content_object_is_reachable_from_the_script_at_all(self):
+    def test_no_phase_one_function_can_reach_a_content_object(self):
         # Structural, not incidental: the OOM came from walking content
-        # objects, so the names that would do it must not appear.  Read off
-        # the AST rather than the text, so a comment explaining *why* the
-        # script does not traverse is not itself a violation.
+        # objects, so the names that would do it must not appear anywhere
+        # phase 1 executes.  Read off the AST rather than the text, so a
+        # comment explaining *why* phase 1 does not traverse is not itself
+        # a violation.
+        #
+        # Scoped to the phase-1 functions rather than the module: phase 2
+        # legitimately traverses, because image_scales is metadata of the
+        # content object and reindexObject reaches its catalog through
+        # acquisition. Widening this to the whole file again would forbid
+        # the one place that has to.
         backfill = _backfill()
         tree = ast.parse(Path(backfill.__file__).read_text())
-        used = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
-        used |= {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+        phase_one = {
+            "run_generate",
+            "load_field_value",
+            "candidate_query",
+            "select_candidates",
+            "work_list_cursor",
+        }
+        forbidden = {
+            "unrestrictedTraverse",
+            "getObject",
+            "portal_catalog",
+            "objectValues",
+            "getPhysicalPath",
+        }
 
-        assert used.isdisjoint(
-            {
-                "unrestrictedTraverse",
-                "getObject",
-                "portal_catalog",
-                "objectValues",
-                "getPhysicalPath",
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef) or node.name not in phase_one:
+                continue
+            used = {
+                child.attr
+                for child in ast.walk(node)
+                if isinstance(child, ast.Attribute)
             }
-        )
+            used |= {
+                child.id for child in ast.walk(node) if isinstance(child, ast.Name)
+            }
+            assert used.isdisjoint(forbidden), node.name
 
     def test_every_field_value_is_deactivated_again(self, monkeypatch, tmp_path):
         run = _generate(monkeypatch, tmp_path, chunks=[[3, 9], []])
@@ -1332,8 +1354,12 @@ class TestCropHistogram:
         assert report["crops"] == {"albumfull": 1}
 
 
+_NO_REINDEX = {"objects": 0, "chunks": 0, "reindexed": 0, "unowned": 0, "failed": 0}
+_VERIFIED = {"remaining": 0, "unowned": 0, "stale_scales": 0, "verified": True}
+
+
 class TestRunDispatch:
-    """``run`` is the entry point; phase 2 is not finished and must say so."""
+    """``run`` drives both phases and then reports whether it believes itself."""
 
     def test_a_dry_run_never_enters_phase_one(self, monkeypatch, tmp_path):
         backfill = _backfill()
@@ -1361,6 +1387,8 @@ class TestRunDispatch:
         monkeypatch.setattr(backfill, "set_source_derivative", lambda *a, **kw: True)
         progress = backfill.Progress(tmp_path / "p.json")
 
+        monkeypatch.setattr(backfill, "run_reindex", lambda *a, **kw: _NO_REINDEX)
+        monkeypatch.setattr(backfill, "verify", lambda *a, **kw: _VERIFIED)
         backfill.run(
             SimpleNamespace(_p_jar=_FakeConnection()),
             max_edge=4000,
@@ -1371,15 +1399,34 @@ class TestRunDispatch:
 
         assert progress.last_zoid(backfill.PHASE_GENERATE) == 9
 
-    def test_a_finished_phase_one_is_not_a_finished_run(
+    def test_phase_one_alone_is_never_reported_as_finished(
         self, monkeypatch, tmp_path, capsys
     ):
+        """Writing the derivatives is half the job.
+
+        Between the phases the catalog still holds direct, signed Thumbor
+        URLs pointing at the originals, and a browser fetches those without
+        Plone in the path.  Claiming success there would be a lie, so a run
+        whose phase 2 found nothing to do must still fail verification if
+        candidates remain.
+        """
         backfill = _backfill()
         monkeypatch.setattr(backfill, "transaction", _FakeTransaction())
         monkeypatch.setattr(backfill, "set_source_derivative", lambda *a, **kw: True)
+        monkeypatch.setattr(backfill, "run_reindex", lambda *a, **kw: _NO_REINDEX)
+        monkeypatch.setattr(
+            backfill,
+            "verify",
+            lambda *a, **kw: {
+                "remaining": 4,
+                "unowned": 0,
+                "stale_scales": 0,
+                "verified": False,
+            },
+        )
         progress = backfill.Progress(tmp_path / "p.json")
 
-        backfill.run(
+        result = backfill.run(
             SimpleNamespace(_p_jar=_FakeConnection()),
             max_edge=4000,
             progress=progress,
@@ -1387,11 +1434,25 @@ class TestRunDispatch:
             cursor=_RunnerCursor(chunks=[[3], []]),
         )
 
-        # Between the phases the catalog still holds direct Thumbor URLs
-        # pointing at the originals, and a browser fetches those without
-        # Plone in the path.  Reporting success here would be a lie.
-        assert progress.reindex_pending is True
-        assert backfill.PHASE_REINDEX in capsys.readouterr().out
+        assert result["verification"]["verified"] is False
+        assert "NOT VERIFIED" in capsys.readouterr().out
+
+    def test_a_run_reports_both_phases_and_the_verdict(self, monkeypatch, tmp_path):
+        backfill = _backfill()
+        monkeypatch.setattr(backfill, "transaction", _FakeTransaction())
+        monkeypatch.setattr(backfill, "set_source_derivative", lambda *a, **kw: True)
+        monkeypatch.setattr(backfill, "run_reindex", lambda *a, **kw: _NO_REINDEX)
+        monkeypatch.setattr(backfill, "verify", lambda *a, **kw: _VERIFIED)
+
+        result = backfill.run(
+            SimpleNamespace(_p_jar=_FakeConnection()),
+            max_edge=4000,
+            progress=backfill.Progress(tmp_path / "p.json"),
+            chunk=10,
+            cursor=_RunnerCursor(chunks=[[3], []]),
+        )
+
+        assert set(result) == {"generate", "reindex", "verification"}
 
 
 class TestWorkListCursorLifecycle:
@@ -1441,3 +1502,226 @@ class TestWorkListCursorLifecycle:
             raise RuntimeError("chunk exploded")
 
         pool.putconn.assert_called_once_with(connection)
+
+
+class _ReindexCursor:
+    """Answers the phase-2 walk and the owner lookup, dispatching on SQL."""
+
+    def __init__(self, chunks=(), owners=(), counts=None):
+        self.chunks = [list(chunk) for chunk in chunks]
+        self.owners = [dict(row) for row in owners]
+        self.counts = dict(counts or {})
+        self.calls = []
+        self._rows = []
+
+    def execute(self, sql, params=None):
+        self.calls.append((" ".join(sql.split()), params))
+        text = " ".join(sql.split())
+        if "count(*) AS unowned" in text:
+            self._rows = [{"unowned": self.counts.get("unowned", 0)}]
+        elif "count(*) AS stale" in text:
+            self._rows = [{"stale": self.counts.get("stale", 0)}]
+        elif "count(*)" in text:
+            summary = {"candidates": 0, "without_modified": 0}
+            summary.update(self.counts.get("summary", {}))
+            self._rows = [summary]
+        elif "refs &&" in text:
+            self._rows = list(self.owners)
+        else:
+            chunk = self.chunks.pop(0) if self.chunks else []
+            self._rows = [{"zoid": zoid} for zoid in chunk]
+        return self
+
+    def fetchall(self):
+        return list(self._rows)
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+
+class _Reindexable:
+    def __init__(self, path):
+        self.path = path
+        self.calls = []
+        self.deactivated = 0
+
+    def reindexObject(self, idxs=None):
+        self.calls.append(idxs)
+
+    def _p_deactivate(self):
+        self.deactivated += 1
+
+
+class _Portal:
+    def __init__(self, objects=None, explode=()):
+        self.objects = objects or {}
+        self.explode = set(explode)
+        self._p_jar = object()
+
+    def unrestrictedTraverse(self, path):
+        if path in self.explode:
+            raise KeyError(path)
+        return self.objects.setdefault(path, _Reindexable(path))
+
+
+def _reindex(monkeypatch, tmp_path, chunks, owners=(), explode=(), portal=None):
+    backfill = _backfill()
+    monkeypatch.setattr(backfill, "transaction", _FakeTransaction())
+    monkeypatch.setattr(backfill, "require_thumbor_request", lambda: None)
+    monkeypatch.setattr(backfill, "_invalidate_cache", lambda conn: None)
+    monkeypatch.setattr(backfill, "_release_memory", lambda: None)
+    cursor = _ReindexCursor(chunks=chunks, owners=owners)
+    portal = portal if portal is not None else _Portal(explode=explode)
+    progress = backfill.Progress(tmp_path / "p.json")
+    stats = backfill.run_reindex(portal, cursor, progress, chunk=2)
+    return SimpleNamespace(
+        backfill=backfill,
+        cursor=cursor,
+        portal=portal,
+        progress=progress,
+        stats=stats,
+    )
+
+
+class TestPhaseTwoRequiresARequest:
+    """The gate. Nothing may be written before the context is proven."""
+
+    def test_it_refuses_without_one(self, monkeypatch, tmp_path):
+        from plone.pgthumbor.zconsole import RequestContextError
+
+        backfill = _backfill()
+        cursor = _ReindexCursor(chunks=[[1]])
+
+        def refuse():
+            raise RequestContextError("no request")
+
+        monkeypatch.setattr(backfill, "require_thumbor_request", refuse)
+
+        with pytest.raises(RequestContextError):
+            backfill.run_reindex(
+                _Portal(), cursor, backfill.Progress(tmp_path / "p.json"), chunk=2
+            )
+
+        # Not one query issued: a reindex without a request overwrites
+        # image_scales with null for everything it touches, so the check
+        # has to come before the walk rather than inside it.
+        assert cursor.calls == []
+
+
+class TestPhaseTwoReindex:
+    """Walking the derivative-bearing field values and reindexing owners."""
+
+    def test_it_reindexes_only_image_scales(self, monkeypatch, tmp_path):
+        run = _reindex(
+            monkeypatch,
+            tmp_path,
+            chunks=[[3, 9], []],
+            owners=[{"zoid": 1, "path": "/s/a"}],
+        )
+
+        # An empty idxs calls notifyModified() and would bump the
+        # modification date of every object touched, breaking
+        # recently-modified listings and every cache key downstream.
+        assert run.portal.objects["/s/a"].calls == [["image_scales"]]
+
+    def test_one_owner_of_two_image_fields_is_reindexed_once(
+        self, monkeypatch, tmp_path
+    ):
+        run = _reindex(
+            monkeypatch,
+            tmp_path,
+            chunks=[[3, 9], []],
+            owners=[{"zoid": 1, "path": "/s/a"}, {"zoid": 1, "path": "/s/a"}],
+        )
+
+        assert len(run.portal.objects["/s/a"].calls) == 1
+
+    def test_a_field_value_with_no_catalogued_owner_is_counted(
+        self, monkeypatch, tmp_path
+    ):
+        run = _reindex(monkeypatch, tmp_path, chunks=[[3, 9], []], owners=[])
+
+        # An annotation-nested behaviour, or an object deleted between the
+        # phases. Nothing can reindex it, so it is reported rather than
+        # silently counted as done.
+        assert run.stats["unowned"] == 2
+        assert run.stats["reindexed"] == 0
+
+    def test_a_failing_object_is_skipped_not_fatal(self, monkeypatch, tmp_path):
+        run = _reindex(
+            monkeypatch,
+            tmp_path,
+            chunks=[[3], []],
+            owners=[{"zoid": 1, "path": "/s/gone"}],
+            explode=["/s/gone"],
+        )
+
+        assert run.stats["failed"] == 1
+
+    def test_progress_advances_per_chunk(self, monkeypatch, tmp_path):
+        run = _reindex(
+            monkeypatch,
+            tmp_path,
+            chunks=[[3, 9], []],
+            owners=[{"zoid": 1, "path": "/s/a"}],
+        )
+
+        assert run.progress.last_zoid(run.backfill.PHASE_REINDEX) == 9
+
+    def test_the_walk_uses_its_own_phase_cursor(self, monkeypatch, tmp_path):
+        run = _reindex(
+            monkeypatch,
+            tmp_path,
+            chunks=[[3, 9], []],
+            owners=[{"zoid": 1, "path": "/s/a"}],
+        )
+        walks = [call for call in run.cursor.calls if "ORDER BY zoid" in call[0]]
+
+        # Two passes over the same ordered population, each with its own
+        # resume point — that is what makes a chunk "done only once
+        # reindexed" rather than "done once written".
+        assert walks[0][1]["last_zoid"] == 0
+        assert walks[1][1]["last_zoid"] == 9
+
+    def test_it_selects_only_generated_outcomes(self, monkeypatch, tmp_path):
+        from plone.pgthumbor.derivative import REASON_GENERATED
+
+        run = _reindex(monkeypatch, tmp_path, chunks=[[], []])
+        walk = next(call for call in run.cursor.calls if "ORDER BY zoid" in call[0])
+
+        assert walk[1]["generated_reason"] == REASON_GENERATED
+
+
+class TestVerification:
+    """Three counts that must all be zero before a run counts as finished."""
+
+    def _verify(self, **counts):
+        backfill = _backfill()
+        cursor = _ReindexCursor(counts=counts)
+        return backfill.verify(cursor, 4000)
+
+    def test_a_clean_run_verifies(self):
+        report = self._verify(summary={"candidates": 0}, unowned=0, stale=0)
+
+        assert report["verified"] is True
+
+    def test_remaining_candidates_fail_it(self):
+        report = self._verify(summary={"candidates": 7}, unowned=0, stale=0)
+
+        assert report["verified"] is False
+        assert report["remaining"] == 7
+
+    def test_an_owner_without_scales_fails_it(self):
+        report = self._verify(summary={"candidates": 0}, unowned=0, stale=3)
+
+        # Both "phase 2 never reached it" and "something nulled the
+        # column" land here, and the second is the failure a request-less
+        # reindex causes.
+        assert report["verified"] is False
+        assert report["stale_scales"] == 3
+
+    def test_a_derivative_with_no_owner_fails_it(self):
+        report = self._verify(summary={"candidates": 0}, unowned=2, stale=0)
+
+        assert report["verified"] is False
+        assert report["unowned"] == 2

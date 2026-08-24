@@ -18,6 +18,8 @@ Or as a browser view (Manager only)::
 
 from __future__ import annotations
 
+from plone.pgthumbor.zconsole import establish_request
+from plone.pgthumbor.zconsole import require_thumbor_request
 from zope.annotation.interfaces import IAnnotations
 
 import logging
@@ -131,13 +133,22 @@ class PurgeScalesView:
 
 
 def main(app, args):
-    """Entry point for ``zconsole run -m plone.pgthumbor.purge_scales``."""
+    """Entry point for ``zconsole run -m plone.pgthumbor.purge_scales``.
+
+    Issue #16.  This walks the whole catalog and reindexes ``image_scales``
+    for every object it touches, so without a request carrying the browser
+    layer it does not merely miss the Thumbor URLs — it overwrites the
+    column with null, site-wide.  ``makerequest`` alone never did that:
+    it sets ``app.REQUEST`` but leaves ``getRequest()`` at ``None``.
+    """
     from AccessControl.SecurityManagement import newSecurityManager
-    from Testing.makerequest import makerequest
 
     # args.site is set by zconsole's -s flag
     site_id = getattr(args, "site", None) or "Plone"
-    app = makerequest(app)
+    app = establish_request(app)
+    # Before the walk, not after: the caller has to be able to rely on
+    # nothing having been written when this raises.
+    require_thumbor_request()
 
     # Elevate privileges
     admin = app.acl_users.getUserById("admin")

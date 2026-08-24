@@ -13,8 +13,8 @@ the wrong shape.
 
 Issue #21 names three defects in `ThumborScaleStorage._heal_legacy_uid` and
 `_allowed_scale_sizes`. A pre-implementation review against the installed sources
-(`plone.scale` 5.0.0a3, `plone.namedfile` 7.3.0, sdist of 8.0.0a3, and Pillow itself)
-confirms all three, corrects the fix the issue proposes, and finds two further defects
+(`plone.scale` 5.0.0, `plone.namedfile` 7.3.0, sdist of 8.0.0a3, and Pillow itself)
+confirms all three, corrects the fix the issue proposes, and finds one further defect
 without which fixing #21 has no observable effect.
 
 ## Review of the issue as filed
@@ -75,9 +75,10 @@ Two consequences:
    `_build_thumbor_url` discards it one call later. The plumbing fix is a necessary
    condition for defect 1, not an adjacent concern.
 
-### New: `scale_mode_to_thumbor` maps `cover` and `contain` the wrong way round
+### Checked and already handled: the `cover`/`contain` mapping
 
-Measured against real Pillow output (`scalePILImage`, target box 400×200):
+`plone.scale`'s mode names are the reverse of what they describe. Measured against real
+Pillow output (`scalePILImage`, target box 400×200):
 
 | Original | `scale` | `contain` | `cover` |
 | --- | --- | --- | --- |
@@ -85,23 +86,27 @@ Measured against real Pillow output (`scalePILImage`, target box 400×200):
 | 400×1000 | 80×200 | **400×200** | 80×200 |
 | 200×100 | 200×100 | 200×100 | **400×200** |
 
-`contain` fills the box exactly and crops — that is Thumbor's default, `fit_in=False`.
-`cover` never crops; it fits inside and may scale up — that is `fit_in=True`.
-`url.py`'s mapping is inverted. The confusion is understandable: `plone.scale`'s own
-aliases (`scale-crop-to-fill` for `cover`) and its docstring's claim to follow CSS
-`background-size` both describe the opposite of what `_calculate_all_dimensions`
-implements.
+`contain` fills the box exactly and crops, which is Thumbor's default (`fit_in=False`).
+`cover` never crops; it fits inside and may scale up, which is `fit_in=True`. Both are
+the opposite of `plone.scale`'s own aliases (`scale-crop-to-fill` for `cover`) and of its
+docstring's claim to follow CSS `background-size`.
 
-This is forced into scope: the plumbing fix above makes `mode` effective for the first
-time, and with the inverted table `contain` would become accidentally correct while
-`cover` became newly wrong.
+This is already compensated on `main`. Commit `45af38a` added a version-gated swap in
+`scale_mode_to_thumbor` for `plone.scale < 6`, referencing `plone/plone.scale#78`.
+Verified end to end against the installed stack: for all three modes, whether Thumbor
+crops now matches whether `plone.scale` cropped, and `smart` is enabled exactly on the
+cropping path.
 
-It also supplies a third and more likely route to `bda/aaf/deployment#5` ("Slider uses
-fit-in scales → jumping image sizes") than the healing hypothesis in §5 of the derivative
-design: `pre_scale` computes the tag's `width`/`height` from the *real* mode, while the
-URL is built as `fit_in` — so the delivered image has different dimensions than the
-`<img>` element claims, on every render, with no healing involved. Stated as a
-hypothesis to verify against the deployment's templates, not a diagnosis.
+Nothing to fix, but it does not stay free once `mode` becomes effective, so this design
+pins the behaviour with a test (§6).
+
+### The consequence for `bda/aaf/deployment#5`
+
+Defect B alone supplies a route to "Slider uses fit-in scales → jumping image sizes" that
+does not involve healing: `pre_scale` computes the tag's `width`/`height` from the *real*
+mode, while the URL is built as `mode="scale"` and therefore `fit_in`. A `contain` scale
+gets a tag claiming the cropped box and an image fitted inside it, on every render.
+Stated as a hypothesis to verify against the deployment's templates, not a diagnosis.
 
 ## Goals
 
@@ -128,7 +133,7 @@ hypothesis to verify against the deployment's templates, not a diagnosis.
 | --- | --- | --- |
 | A | Traversal builds the storage with `modified=None`, so no hash comparison can match | Reconstruct the mint time, set `self.modified` |
 | B | `mode` lives only in `info["key"]`; all four call sites see `"scale"` | `_scale_param()` reads from `key`, normalised through `get_scale_mode` |
-| C | `cover`/`contain` → `fit_in` inverted | Correct the mapping, with the evidence in a comment |
+| C | `cover`/`contain` mapping is correct but untested, and the version gate can flip it silently | Pin it with a test derived from `scalePILImage` |
 | 1 | `mode` hardcoded in healing | Dissolves — the mode is recovered with the rest |
 | 2 | `_allowed_scale_sizes()` collides on width | Registry order as a list of `(name, width, height)`, no deduplication |
 | 3 | `0:H` heals to original dimensions | Dissolves — `(0, 460)` is a candidate like any other |
@@ -255,25 +260,26 @@ consistently holds the raw value that `hash_key` also hashed. Normalising throug
 The PR does not touch uid computation, so minted uids stay valid and §3's enumeration is
 unaffected by it either way.
 
-### 6. The `cover`/`contain` correction
+### 6. Pinning the `cover`/`contain` mapping
 
-`scale_mode_to_thumbor` becomes:
+`scale_mode_to_thumbor` is left alone. What it lacks is a test that would notice if it
+broke, and the plumbing fix is what makes that matter: today the function is only ever
+called with `"scale"` from the live paths, so an error in the other two branches is
+unobservable. Afterwards it is load-bearing.
 
-| Plone mode | Thumbor | Why |
-| --- | --- | --- |
-| `scale` | `fit_in=True` | fits inside the box, never scales up |
-| `cover` | `fit_in=True` | fits inside the box, may scale up — never crops |
-| `contain` | `fit_in=False` | fills the box exactly by cropping |
+The gate is `PLONE_SCALE_VERSION < 6`, on the expectation that `plone/plone.scale#78`
+lands in 6. Two ways that goes wrong: `plone.scale` 6 ships without the fix, or it ships
+the fix and pgthumbor's floor moves before anyone checks. Either way the swap flips
+silently and every cropping scale becomes a fit-in.
 
-The code carries a comment stating that this contradicts `plone.scale`'s own alias names
-and its CSS `background-size` docstring, and that the table above was measured against
-`scalePILImage` rather than read off those names. Without that note the next reader will
-"fix" it back.
+So the test derives the expectation instead of restating it: scale a real `PIL.Image`
+through `scalePILImage` for each mode, ask whether `plone.scale` cropped, and assert that
+`scale_mode_to_thumbor`'s `fit_in` says the same thing. It also asserts that `smart`
+follows the `smart_cropping` setting on the cropping path, where it is the only place
+Thumbor acts on it.
 
-`smart` follows the `smart_cropping` setting on all three modes. It is inert under
-`fit_in`, so the only mode where it now takes effect is `contain` — which is the mode
-that crops, and therefore the one smart cropping exists for. Today it is hardcoded off
-there and enabled on the two modes where Thumbor ignores it.
+That test passes today, fails the day the gate stops matching reality, and needs no edit
+when `plone.scale` 6 arrives with the fix.
 
 ## Testing
 
@@ -298,8 +304,9 @@ For `scaling.py`: an info dict whose `key` tuple carries `mode="contain"` produc
 
 For the mode mapping: a table-driven test that scales a real `PIL.Image` through
 `scalePILImage` for each mode and asserts that Thumbor's `fit_in` choice matches whether
-`plone.scale` cropped. That keeps the evidence executable rather than asserting the
-mapping against itself.
+`plone.scale` cropped, plus `smart` on the cropping path. That keeps the evidence
+executable rather than asserting the mapping against itself, and it is what catches the
+version gate going stale.
 
 Existing tests that encode the defects must be inverted, not deleted quietly:
 `test_first_width_wins_on_duplicates` (defect 2) and
@@ -328,6 +335,6 @@ One PR against `main` in `sources/plone-pgthumbor`, branch
 Afterwards, and before the derivative work resumes, §5 of
 `2026-08-21-thumbor-source-derivative-design.md` needs two corrections: the
 `self.modified_time` assumption in its #21 paragraph, and the aaf#5 hypothesis, which now
-has a third and more probable route that does not involve healing at all.
+has a route that does not involve healing at all.
 
 Then release, then the derivative design's §9 continues from its step 2.

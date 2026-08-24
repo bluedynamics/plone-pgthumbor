@@ -17,6 +17,7 @@ from plone.pgthumbor.interfaces import ICropProvider
 from plone.pgthumbor.url import scale_mode_to_thumbor
 from plone.pgthumbor.url import thumbor_url
 from plone.rfc822.interfaces import IPrimaryFieldInfo
+from plone.scale.scale import get_scale_mode
 from ZODB.utils import u64
 from zope.component import queryAdapter
 
@@ -27,6 +28,49 @@ logger = logging.getLogger(__name__)
 
 # Content types that should NOT go through Thumbor
 _SKIP_THUMBOR_TYPES = {"image/svg+xml"}
+
+_UNSET = object()
+
+
+def _scale_param(scale_info, name, default=None, key_only=False):
+    """Read a call parameter back out of a plone.scale info dict.
+
+    ``pre_scale`` keeps the parameters in ``info["key"]`` and copies only a few
+    of them into the info dict itself.  ``mode`` looked up directly on the
+    info dict is therefore always absent, and reading it that way builds every
+    URL as if the mode were "scale" — the whole reason a "contain" scale
+    renders letterboxed today.
+
+    The key is consulted first: it exists in every plone.scale version and
+    holds the raw value ``hash_key`` hashed.  plone/plone.scale#156 will add
+    ``mode`` to the dict as well, and reading the key first keeps this correct
+    either way.
+
+    ``key_only`` skips that dict fallback entirely.  It exists because
+    ``scale_info["scale"]`` does not mean the same thing everywhere: on a
+    srcset entry (``plone.namedfile``'s ``calculate_srcset``) it is the
+    integer HiDPI density factor, not a scale name, so a scale-name lookup
+    must never fall back to it.
+    """
+    if not scale_info:
+        return default
+    key = scale_info.get("key")
+    if key:
+        try:
+            parameters = dict(key)
+        except (TypeError, ValueError):
+            parameters = {}
+        value = parameters.get(name, _UNSET)
+        if value is not _UNSET:
+            return value
+    if key_only:
+        return default
+    return scale_info.get(name, default)
+
+
+def _scale_mode(scale_info):
+    """The normalised scale mode for a plone.scale info dict or srcset entry."""
+    return get_scale_mode(_scale_param(scale_info, "mode", "scale"))
 
 
 def _needs_auth_url(
@@ -119,13 +163,7 @@ def _get_crop(context, fieldname, scale_info):
     if provider is None:
         return None
 
-    # Extract scale name from plone.namedfile's key tuple, e.g.
-    # (("fieldname", "image"), ("scale", "preview"), ...)
-    scale_name = None
-    key = scale_info.get("key") if scale_info else None
-    if key:
-        scale_name = dict(key).get("scale")
-
+    scale_name = _scale_param(scale_info, "scale", key_only=True)
     if not fieldname or not scale_name:
         return None
 
@@ -192,7 +230,7 @@ class ThumborImageScale(ImageScale):
                 self.data,
                 info.get("width", 0) or 0,
                 info.get("height", 0) or 0,
-                info.get("mode", "scale"),
+                _scale_mode(info),
                 crop=crop,
             )
             if url:
@@ -212,7 +250,7 @@ class ThumborImageScale(ImageScale):
                 self.data,
                 scale_info.get("width", 0) or 0,
                 scale_info.get("height", 0) or 0,
-                scale_info.get("mode", "scale"),
+                _scale_mode(scale_info),
                 crop=crop,
             )
             if url:
@@ -250,7 +288,7 @@ class ThumborImageScale(ImageScale):
                 self.data,
                 entry.get("width", 0) or 0,
                 entry.get("height", 0) or 0,
-                entry.get("mode", "scale"),
+                _scale_mode(entry),
                 crop=crop,
             )
             if url:
@@ -281,7 +319,7 @@ class ThumborImageScaling(ImageScaling):
                     data,
                     scale_info.get("width", 0) or 0,
                     scale_info.get("height", 0) or 0,
-                    scale_info.get("mode", "scale"),
+                    _scale_mode(scale_info),
                     crop=crop,
                 )
                 if url:

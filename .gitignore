@@ -36,3 +36,6 @@ docs/.venv/
 docs/.vale/styles/Microsoft/
 docs/.vale/styles/write-good/
 .worktrees/
+
+# Superpowers scratch (SDD ledger, briefs, review packages)
+.superpowers/

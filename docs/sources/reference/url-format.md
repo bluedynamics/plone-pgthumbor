@@ -111,8 +111,14 @@ Plone scale modes are mapped to Thumbor parameters by
 | Plone Mode | `fit_in` | `smart` | Behavior |
 |---|---|---|---|
 | `scale` (default) | `True` | per `smart_cropping` setting | Fits image within the requested dimensions without cropping. Aspect ratio is preserved. Smart cropping is applied if enabled. |
-| `cover` | `False` | per `smart_cropping` setting | Resizes and crops to fill the exact requested dimensions. Smart cropping selects the crop region when enabled. |
-| `contain` | `True` | `False` | Fits image within the requested dimensions. Smart cropping is always disabled. |
+| `cover` | `True` | `False` | Fits image within the requested dimensions without cropping. May upscale. Smart cropping is always disabled. |
+| `contain` | `False` | per `smart_cropping` setting | Resizes and crops to fill the exact requested dimensions. Smart cropping selects the crop region when enabled. |
+
+`plone.scale`'s own mode names are the reverse of what they describe -- see
+[plone/plone.scale#78](https://github.com/plone/plone.scale/issues/78).
+`scale_mode_to_thumbor()` swaps `cover` and `contain` behind a `plone.scale < 6`
+gate to compensate; the table above is the resulting `fit_in`/`smart` mapping,
+not `plone.scale`'s naming.
 
 When an explicit crop is active, these mode defaults are overridden:
 `fit_in` becomes `True` and `smart` becomes `False` for all modes.

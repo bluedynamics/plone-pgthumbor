@@ -2,8 +2,87 @@
 
 ## 0.6.6 (unreleased)
 
+- Bump `hynek/build-and-inspect-python-package` from v2 to v3.0.1. Hatchling now
+  emits `Metadata-Version: 2.5`, which the Twine bundled in v2 rejects with
+  `InvalidDistribution: '2.5' is not a valid metadata version` — the release
+  build failed before uploading anything. v3 ships Twine 7, which supports it.
+
+- Add the `LICENSE` file with the full GNU General Public License v2.0 text.
+  The packaging metadata already declared `GPL-2.0-only`, but the license text
+  itself was missing from the repository, so GitHub reported "No license" and
+  the terms could not be verified from the source tree alone. Fixes #24.
+
+- Support the `scale` mode semantics bug from plone.scale < version 6.
+  The scale mode names are opposite to the corresponding CSS `object-fit`
+  property names. We expect that to be fixed in version 6.
+  [thet]
+
 - Add `cloud-vinyl` and `plone.observability` to the ecosystem navigation
   dropdown in the docs.
+
+- Fix: `_heal_legacy_uid` now recovers the scale a uid was minted for instead
+  of guessing one from its width. The uid's md5 covers the whole parameter set
+  plus the field's modification time, so the candidates are enumerated and
+  re-hashed with `plone.scale`'s own `hash_key` until one matches. That
+  identifies the mode rather than assuming `"scale"`, tells two registered
+  scales sharing a width apart (`Haeuser 400:200` used to heal as
+  `preview 400:0`), and resolves height-driven `0:H` scales, which used to
+  heal into a request at the original's dimensions and could push Thumbor past
+  `MAX_PIXELS`.
+
+  Matching only works once the modification time is reconstructed:
+  `publishTraverse` adapts `(context, None)`, so the storage's `modified_time`
+  is `None` at healing time while the uid was hashed against the field's
+  modification time. A uid older than the image's last modification cannot be
+  identified at all and falls back to the first registered scale of that width.
+  The original's dimensions are requested only for the one case where that
+  fallback has no other reading: a uid with no width at all, and no `0:H`
+  scale registered.
+
+  Closes [#21](https://github.com/bluedynamics/plone-pgthumbor/issues/21).
+
+- Fix: a healed uid for a scale with both dimensions set now recovers the
+  scale's name instead of `scale=None`, so `_get_crop` still finds the
+  configured crop. `hash_key` drops the `scale` key whenever width and
+  height are both truthy, so a named call (`tag(scale="Haeuser")`) and the
+  `image_scales` indexer's `scale=None` call mint the identical uid;
+  healing could not tell them apart and previously assumed the uncropped
+  one.
+
+- Fix: healing no longer reads the field's image size before any candidate
+  is hashed. `NamedBlobImage.getImageSize()` lazily assigns
+  `_width`/`_height` on first call, which registers a ZODB write on a
+  `Persistent` object — reachable by an unauthenticated GET with an
+  attacker-chosen uid. `_original_size` is now consulted only once every
+  registry-derived candidate has already failed to match, which is also
+  the common case, so the successful healing path no longer computes the
+  image size twice either.
+
+- Fix: the scale mode now reaches the generated Thumbor URL. `plone.scale`
+  keeps `mode` in `info["key"]` and never copies it into the info dict, so
+  `info.get("mode", "scale")` always read `"scale"` and every URL was built
+  with `fit_in` — a `contain` scale got an `<img>` tag claiming the cropped
+  box and an image fitted inside it instead. Both `plone.namedfile` code paths
+  and the HiDPI `srcset` attribute are fixed. Forward-compatible with
+  [plone/plone.scale#156](https://github.com/plone/plone.scale/pull/156),
+  which adds `mode` to the info dict upstream.
+
+- Tests: pin `scale_mode_to_thumbor` against real `scalePILImage` output. The
+  mapping compensates for `plone.scale`'s inverted mode names behind a
+  `plone.scale < 6` gate, and until the fix above it was only ever reached
+  with `"scale"`, so the other two branches were unobservable.
+
+- Tests: cover the mode-threading fix on the two call sites that had none:
+  `srcset_attribute`, whose argument is a `calculate_srcset` entry rather
+  than a full info dict, and `ThumborImageScaling._scale_url`.
+
+- Docs: fix the "Scale modes" tables in `README.md`,
+  `docs/sources/explanation/why-thumbor.md`, and
+  `docs/sources/reference/url-format.md`, which described the inverse of
+  live behaviour. `plone.scale`'s own mode names are the reverse of what
+  they describe; `scale_mode_to_thumbor` compensates for that, and once
+  `mode` started reaching the Thumbor URL the tables' error stopped being
+  harmless.
 
 ## 0.6.5 (2026-08-04)
 

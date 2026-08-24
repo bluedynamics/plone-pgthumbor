@@ -12,38 +12,20 @@ installed in this Plone site), it falls back to AnnotationStorage.
 
 from __future__ import annotations
 
+from Acquisition import aq_base
+from plone.namedfile.scaling import ImageScaling
 from plone.pgthumbor.interfaces import IPlonePgthumborLayer
-from plone.registry.interfaces import IRegistry
+from plone.pgthumbor.uid_healing import candidate_parameters
+from plone.pgthumbor.uid_healing import parse_legacy_uid
+from plone.pgthumbor.uid_healing import registered_scales
 from plone.scale.storage import AnnotationStorage
-from zope.component import queryUtility
+from ZODB.POSException import ConflictError
 from zope.globalrequest import getRequest
 
 import logging
-import re
 
 
 logger = logging.getLogger(__name__)
-
-# plone.scale >= 4 deterministic uid: {fieldname}-{width}-{md5hex}
-_LEGACY_UID_RE = re.compile(
-    r"^(?P<fieldname>.+)-(?P<width>\d{1,9})-(?P<hash>[0-9a-f]{32})$"
-)
-
-
-def _allowed_scale_sizes():
-    """Map width -> (width, height) for all registered plone.allowed_sizes."""
-    registry = queryUtility(IRegistry)
-    if registry is None:
-        return {}
-    sizes = {}
-    for line in registry.get("plone.allowed_sizes") or ():
-        try:
-            _name, dims = line.split()
-            width, height = dims.split(":")
-            sizes.setdefault(int(width), (int(width), int(height)))
-        except ValueError:
-            continue
-    return sizes
 
 
 def thumbor_scale_storage_factory(context, modified=None):
@@ -103,28 +85,125 @@ class ThumborScaleStorage(AnnotationStorage):
             return info
         return self._heal_legacy_uid(uid)
 
-    def _heal_legacy_uid(self, uid):
-        """Rebuild scale info from a ``{fieldname}-{width}-{md5hex}`` uid.
+    def _mint_time(self, fieldname):
+        """The modification time the requested uid was hashed against.
 
-        Only widths registered in ``plone.allowed_sizes`` are accepted
-        (width 0 = original dimensions), so this cannot be abused to get
-        arbitrary dimensions signed on demand.  ``pre_scale`` itself
-        returns None for unknown fields or empty values.
+        ``ImageScaling.modified`` is what minted it.  ``ImageScaling`` is a
+        BrowserView whose ``__init__`` only assigns, so instantiating it here
+        is a plain constructor call: no component lookup, no ZCML, and no copy
+        of that logic to drift.  The method is byte-identical in
+        plone.namedfile 7.3.0 and 8.0.0a3.
         """
-        match = _LEGACY_UID_RE.match(uid)
-        if match is None:
+        return ImageScaling(self.context, getRequest()).modified(fieldname)
+
+    def _original_size(self, fieldname):
+        """The original image's ``(width, height)``, or None.
+
+        Only used to offer the "download" candidate, so an empty field or a
+        corrupt image simply removes that one candidate.
+        """
+        value = getattr(aq_base(self.context), fieldname, None)
+        get_size = getattr(value, "getImageSize", None)
+        if get_size is None:
             return None
-        fieldname = match.group("fieldname")
-        width = int(match.group("width"))
-        if width == 0:
-            dims = (None, None)
-        else:
-            dims = _allowed_scale_sizes().get(width)
-            if dims is None:
-                return None
-        info = self.pre_scale(
-            fieldname=fieldname, width=dims[0], height=dims[1], mode="scale"
-        )
+        try:
+            return get_size()
+        except ConflictError:
+            raise
+        except Exception:
+            logger.warning(
+                "Could not read image size for %r field %s",
+                self.context,
+                fieldname,
+                exc_info=True,
+            )
+            return None
+
+    def _match_candidate(self, uid, fieldname, dimension, scales):
+        """Return the parameters whose hash_key equals *uid*, or None.
+
+        *original_size* is passed as a callable, not a value: computing it
+        can load the whole blob and, on a Persistent field value, lazily
+        assign its width/height, which registers a ZODB write
+        (``NamedBlobImage.getImageSize``). Nothing on this path may write to
+        ZODB, and it is reachable by an unauthenticated GET with an
+        attacker-chosen uid, so the field must stay untouched unless every
+        registry-derived candidate has already failed to match.
+        """
+        for parameters in candidate_parameters(
+            fieldname, dimension, scales, lambda: self._original_size(fieldname)
+        ):
+            if self.hash_key(**parameters) == uid:
+                return parameters
+        return None
+
+    def _fallback_parameters(self, fieldname, dimension, scales):
+        """Parameters to use when no candidate hashes to the requested uid.
+
+        The uid predates the image's last modification, so its parameters are
+        unrecoverable: ``modified`` is part of the hash.  Serve the current
+        image anyway.  plone.scale deliberately returns outdated scales at this
+        point, and a cached page whose image was replaced should show the new
+        image rather than a hole.
+
+        The original's dimensions are only requested when the uid carries no
+        width and no ``0:H`` scale is registered, which is the genuine
+        ``tag()``-without-a-width case and the only reading left.  Requesting
+        them speculatively is what can push Thumbor past ``MAX_PIXELS``.
+
+        An unregistered width returns None and traversal raises NotFound,
+        keeping the issue #17 gate that stops arbitrary dimensions from being
+        signed on demand.
+        """
+        for _name, width, height in scales:
+            if width == dimension:
+                return {
+                    "fieldname": fieldname,
+                    "width": width,
+                    "height": height,
+                    "mode": "scale",
+                    "scale": None,
+                }
+        if dimension == 0:
+            return {
+                "fieldname": fieldname,
+                "width": None,
+                "height": None,
+                "mode": "scale",
+                "scale": None,
+            }
+        return None
+
+    def _heal_legacy_uid(self, uid):
+        """Rebuild scale info for a ``{fieldname}-{width}-{md5hex}`` uid.
+
+        The parameters are not readable out of the uid, so they are enumerated
+        and re-hashed until one matches.  That identifies the mode, tells two
+        scales sharing a width apart, and resolves ``0:H`` scales, all of which
+        the previous width-only heuristic got wrong (issue #21).
+        """
+        parsed = parse_legacy_uid(uid)
+        if parsed is None:
+            return None
+        fieldname, dimension = parsed
+
+        # publishTraverse adapts (context, None), so ``modified_time`` is None
+        # here while the uid was hashed against the field's modification time.
+        # Without restoring it, no candidate can ever match.
+        mint_time = self._mint_time(fieldname)
+
+        def minted():
+            return mint_time
+
+        self.modified = minted
+
+        scales = registered_scales()
+        parameters = self._match_candidate(uid, fieldname, dimension, scales)
+        if parameters is None:
+            parameters = self._fallback_parameters(fieldname, dimension, scales)
+        if parameters is None:
+            return None
+        info = self.pre_scale(**parameters)
         if info is not None:
             info.setdefault("fieldname", fieldname)
         return info

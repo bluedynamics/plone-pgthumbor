@@ -20,13 +20,25 @@ def _mock_blob(oid_int=0x42, serial_int=0xFF):
     return blob
 
 
-def _mock_image_data(content_type="image/jpeg", width=800, height=600):
+def _mock_image_data(
+    content_type="image/jpeg",
+    width=800,
+    height=600,
+    derivative=None,
+    source_ids=None,
+):
     data = MagicMock()
     data.contentType = content_type
     data._width = width
     data._height = height
     data.getImageSize.return_value = (width, height)
     data._blob = _mock_blob()
+    # Both attributes are set explicitly, and that is load-bearing.  getattr
+    # on a MagicMock auto-creates a child mock rather than returning the
+    # default, so source selection would find a Mock instead of None, u64()
+    # would be handed one, and roughly forty green tests would fail at once.
+    data._pgthumbor_source = derivative
+    data._pgthumbor_source_info = {"source_ids": source_ids} if source_ids else None
     return data
 
 
@@ -1459,3 +1471,178 @@ class TestModeReachesTheUrlInScalingScaleUrl:
         plain = self._url(monkeypatch, "scale")
 
         assert contain != plain
+
+
+def _mock_derivative(oid_int=0x99, serial_int=0xAA):
+    """A stand-in for the NamedBlobImage stored as _pgthumbor_source."""
+    derivative = MagicMock()
+    derivative.contentType = "image/jpeg"
+    derivative._blob = _mock_blob(oid_int, serial_int)
+    return derivative
+
+
+class _PlainImage:
+    """A field value that is not a mock and has no derivative attribute.
+
+    Guards the ``getattr(..., None)`` default itself: a MagicMock would
+    return a child mock and hide a missing default.
+    """
+
+    contentType = "image/jpeg"
+
+    def __init__(self):
+        self._blob = _mock_blob()
+
+    def getImageSize(self):
+        return (800, 600)
+
+
+class TestSourceSelection:
+    """Which blob the Thumbor URL names: the derivative, or the original."""
+
+    def _url(self, monkeypatch, data, **kwargs):
+        from plone.pgthumbor import scaling as scaling_mod
+
+        _setup_env(monkeypatch)
+        monkeypatch.setattr(
+            scaling_mod, "_needs_auth_url", lambda ctx, zoid, paranoid_mode=False: False
+        )
+        ctx = MagicMock()
+        ctx._p_oid = struct.pack(">Q", 0x42)
+        return scaling_mod._build_thumbor_url(ctx, data, 400, 300, "scale", **kwargs)
+
+    def test_the_derivative_is_used_when_there_is_one(self, monkeypatch):
+        data = _mock_image_data(derivative=_mock_derivative())
+
+        url = self._url(monkeypatch, data)
+
+        assert "/99/aa" in url
+        assert "/42/ff" not in url
+
+    def test_the_original_is_used_when_the_sentinel_is_none(self, monkeypatch):
+        url = self._url(monkeypatch, _mock_image_data())
+
+        assert "/42/ff" in url
+
+    def test_the_original_is_used_when_the_attribute_is_absent(self, monkeypatch):
+        url = self._url(monkeypatch, _PlainImage())
+
+        assert "/42/ff" in url
+
+    def test_no_fallback_when_the_derivative_has_no_committed_tid(self, monkeypatch):
+        """The absent fallback IS the feature.  Do not "fix" this.
+
+        A derivative created in the current transaction has no TID yet.
+        Substituting the original here would bake a permanent, direct,
+        signed Thumbor URL to an image that may exceed MAX_PIXELS into
+        catalog metadata — and a browser fetches those without Plone in the
+        path, so the uid-healing route can never repair it.  Emitting no
+        URL yields a uid fallback instead, which heals on the next render
+        and is corrected for good by the backfill's second phase.
+        """
+        uncommitted = _mock_derivative(serial_int=0)
+        data = _mock_image_data(derivative=uncommitted)
+
+        url = self._url(monkeypatch, data)
+
+        assert url is None
+
+    def test_recorded_ids_matching_the_original_keep_the_derivative(self, monkeypatch):
+        data = _mock_image_data(derivative=_mock_derivative(), source_ids=(0x42, 0xFF))
+
+        assert "/99/aa" in self._url(monkeypatch, data)
+
+    def test_recorded_ids_mismatching_the_original_drop_the_derivative(
+        self, monkeypatch
+    ):
+        """Catches an in-place ``image.data = ...``.
+
+        NamedBlobImage.data is a settable property, and migration scripts
+        and transmogrifier blueprints use it.  That replaces the bytes
+        without replacing the object, so the structural-invalidation
+        argument does not apply and only the recorded ids notice.
+        """
+        data = _mock_image_data(
+            derivative=_mock_derivative(), source_ids=(0x1234, 0x5678)
+        )
+
+        url = self._url(monkeypatch, data)
+
+        assert "/42/ff" in url
+        assert "/99/aa" not in url
+
+    def test_recorded_ids_of_none_keep_the_derivative(self, monkeypatch):
+        """None means "not comparable", not "mismatched".
+
+        A derivative generated before its original was committed records
+        None.  Reading that as a mismatch would make every freshly
+        uploaded image permanently refuse the derivative it just made.
+        """
+        data = _mock_image_data(derivative=_mock_derivative(), source_ids=None)
+
+        assert "/99/aa" in self._url(monkeypatch, data)
+
+    def test_the_skip_type_decision_reads_the_originals_content_type(self, monkeypatch):
+        # The derivative is a JPEG; the original is the SVG.  Deciding on
+        # the derivative would send vector images through Thumbor.
+        data = _mock_image_data(
+            content_type="image/svg+xml", derivative=_mock_derivative()
+        )
+
+        assert self._url(monkeypatch, data) is None
+
+    def test_content_zoid_still_comes_from_the_context(self, monkeypatch):
+        from plone.pgthumbor import scaling as scaling_mod
+
+        _setup_env(monkeypatch)
+        monkeypatch.setattr(
+            scaling_mod, "_needs_auth_url", lambda ctx, zoid, paranoid_mode=False: True
+        )
+        ctx = MagicMock()
+        ctx._p_oid = struct.pack(">Q", 0x7B)
+        data = _mock_image_data(derivative=_mock_derivative())
+
+        url = scaling_mod._build_thumbor_url(ctx, data, 400, 300, "scale")
+
+        # Blob ids from the derivative, content zoid still from the context.
+        assert "/99/aa/7b" in url
+
+    def test_selection_reaches_srcset_attribute(self, monkeypatch):
+        from plone.pgthumbor.scaling import ThumborImageScale
+
+        _setup_env(monkeypatch)
+        ctx = MagicMock()
+        ctx.absolute_url.return_value = "http://plone:8080/doc"
+        data = _mock_image_data(derivative=_mock_derivative())
+
+        scale = ThumborImageScale(
+            ctx,
+            MagicMock(),
+            data=data,
+            fieldname="image",
+            width=400,
+            height=300,
+            uid="image-400-abc123",
+            mimetype="image/jpeg",
+            srcset=[
+                {"uid": "image-800-def456", "width": 800, "height": 600, "scale": 2},
+            ],
+        )
+
+        assert "/99/aa" in scale.srcset_attribute()
+
+    def test_selection_reaches_the_scaling_scale_url(self, monkeypatch):
+        from plone.pgthumbor.scaling import ThumborImageScaling
+
+        _setup_env(monkeypatch)
+        ctx = MagicMock()
+        ctx.image = _mock_image_data(derivative=_mock_derivative())
+        view = ThumborImageScaling(ctx, MagicMock())
+
+        url = view._scale_url(
+            "image-400-abc",
+            "jpeg",
+            scale_info={"fieldname": "image", "width": 400, "height": 300},
+        )
+
+        assert "/99/aa" in url

@@ -23,13 +23,25 @@ def _mock_blob(oid_int=0x42, serial_int=0xFF):
     return blob
 
 
-def _mock_image_data(content_type="image/jpeg", width=800, height=600):
+def _mock_image_data(
+    content_type="image/jpeg",
+    width=800,
+    height=600,
+    derivative=None,
+    source_ids=None,
+):
     data = MagicMock()
     data.contentType = content_type
     data._width = width
     data._height = height
     data.getImageSize.return_value = (width, height)
     data._blob = _mock_blob()
+    # Both attributes are set explicitly, and that is load-bearing.  getattr
+    # on a MagicMock auto-creates a child mock rather than returning the
+    # default, so source selection would find a Mock instead of None, u64()
+    # would be handed one, and roughly forty green tests would fail at once.
+    data._pgthumbor_source = derivative
+    data._pgthumbor_source_info = {"source_ids": source_ids} if source_ids else None
     return data
 
 

@@ -111,6 +111,8 @@ def _build_thumbor_url(context, data, width, height, mode, crop=None):
     In that case fit_in is forced True and smart is forced False (explicit
     crop overrides smart detection).
     """
+    # The skip decision reads the *original's* content type, before any
+    # source selection: an SVG with a raster derivative is still an SVG.
     content_type = getattr(data, "contentType", "") if data else ""
     if content_type in _SKIP_THUMBOR_TYPES:
         return None
@@ -119,8 +121,36 @@ def _build_thumbor_url(context, data, width, height, mode, crop=None):
     if cfg is None:
         return None
 
-    blob_ids = get_blob_ids(data)
+    # Source selection.  This has to stay in this function, next to the
+    # crop translation below: split apart, the next caller that picks a
+    # source and forgets to rescale the crop is one refactor away.
+    source = data
+    derivative = getattr(data, "_pgthumbor_source", None)
+    if derivative is not None:
+        info = getattr(data, "_pgthumbor_source_info", None)
+        recorded = info.get("source_ids") if isinstance(info, dict) else None
+        # None means "not comparable", not "mismatched".  A derivative
+        # generated before its original was committed has no ids to record,
+        # and reading that as a mismatch would make every freshly uploaded
+        # image permanently refuse the derivative it just generated.  Where
+        # ids *were* recorded, a difference means the original was mutated
+        # in place — NamedBlobImage.data is a settable property and
+        # migration scripts use it — so the derivative is stale.
+        if recorded is None or recorded == get_blob_ids(data):
+            source = derivative
+
+    blob_ids = get_blob_ids(source)
     if blob_ids is None:
+        # No fallback to the original, and that omission is the feature.
+        #
+        # A derivative created in the current transaction has no committed
+        # TID yet.  Substituting the original here would emit a permanent,
+        # direct, signed Thumbor URL naming an image that may exceed
+        # MAX_PIXELS, and freeze it into catalog metadata — where a browser
+        # fetches it without Plone in the path, so the uid-healing route
+        # can never repair it.  Returning None yields a uid fallback
+        # instead, which heals on the next render and is corrected for good
+        # by the backfill's second phase.
         return None
 
     zoid, tid = blob_ids

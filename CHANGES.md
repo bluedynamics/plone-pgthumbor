@@ -29,8 +29,10 @@
   `publishTraverse` adapts `(context, None)`, so the storage's `modified_time`
   is `None` at healing time while the uid was hashed against the field's
   modification time. A uid older than the image's last modification cannot be
-  identified at all and falls back to the first registered scale of that width,
-  never speculatively to the original's dimensions.
+  identified at all and falls back to the first registered scale of that width.
+  The original's dimensions are requested only for the one case where that
+  fallback has no other reading: a uid with no width at all, and no `0:H`
+  scale registered.
 
   Closes [#21](https://github.com/bluedynamics/plone-pgthumbor/issues/21).
 
@@ -47,6 +49,14 @@
   mapping compensates for `plone.scale`'s inverted mode names behind a
   `plone.scale < 6` gate, and until the fix above it was only ever reached
   with `"scale"`, so the other two branches were unobservable.
+
+- Docs: fix the "Scale modes" tables in `README.md`,
+  `docs/sources/explanation/why-thumbor.md`, and
+  `docs/sources/reference/url-format.md`, which described the inverse of
+  live behaviour. `plone.scale`'s own mode names are the reverse of what
+  they describe; `scale_mode_to_thumbor` compensates for that, and once
+  `mode` started reaching the Thumbor URL the tables' error stopped being
+  harmless.
 
 ## 0.6.5 (2026-08-04)
 

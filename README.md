@@ -64,9 +64,13 @@ Environment variables take precedence over Plone registry settings (`IThumborSet
 
 | Plone mode | Thumbor behaviour |
 |------------|-------------------|
-| `scale` (default) | `fit-in` + smart crop — fits within box, no upscale |
-| `cover` | Smart crop to exact dimensions |
-| `contain` | `fit-in` only — fits within box, no crop |
+| `scale` (default) | `fit-in` + smart crop (if enabled) — fits within box, no upscale |
+| `cover` | `fit-in` only — fits within box, may upscale, never crops |
+| `contain` | Crop to exact dimensions, smart crop (if enabled) — fills the box |
+
+`plone.scale`'s own mode names are the reverse of what they describe: its alias for `cover` is `scale-crop-to-fill`, and its docstring claims to follow CSS `background-size`.
+`scale_mode_to_thumbor` swaps `cover` and `contain` behind a `plone.scale < 6` gate to compensate — see [plone/plone.scale#78](https://github.com/plone/plone.scale/issues/78).
+The table above is the resulting live behaviour, not `plone.scale`'s naming.
 
 ## Try It Out
 

@@ -241,6 +241,20 @@ Both `plone.namedfile` paths are affected and both are covered: the 7.x
 `ThumborImageScale.__init__` path and the 8.x `_scale_url` path, plus
 `srcset_attribute` and `ThumborImageScaling._scale_url`.
 
+**Upstream, and why this is still the right shim.** `plone/plone.scale#156` (open since
+2026-08-23) adds `mode`, `scale` and `fieldname` to the info dict, closing this gap at
+the source and naming pgthumbor as its motivation. It is not merged, and a merge still
+needs a `plone.scale` release and a Plone pin, so it cannot be depended on. It does not
+need to be: reading `info["key"]` first and the info dict second works unchanged before
+and after that PR, and the helper can be dropped once the floor moves. Two details make
+key-first the safer order — `key` is present in every version, and the PR stores the
+*normalised* mode in `pre_scale` but the *raw* one in `generate_scale`, while `key`
+consistently holds the raw value that `hash_key` also hashed. Normalising through
+`get_scale_mode` makes all three agree.
+
+The PR does not touch uid computation, so minted uids stay valid and §3's enumeration is
+unaffected by it either way.
+
 ### 6. The `cover`/`contain` correction
 
 `scale_mode_to_thumbor` becomes:

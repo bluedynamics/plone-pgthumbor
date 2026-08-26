@@ -451,7 +451,75 @@ class ThumborImageScaling(ImageScaling):
             return super()._scale_url(uid, extension, base_url, scale_info=scale_info)
         return _default_scale_url(self.context, uid, extension, base_url)
 
-    def srcset(  # noqa: C901
+    def _primary_field_info(self):
+        """IPrimaryFieldInfo for the context, or None if not adaptable."""
+        try:
+            return IPrimaryFieldInfo(self.context, None)
+        except TypeError:
+            return None
+
+    def _srcset_entry(self, fieldname, width, height):
+        """One ``url NNNw`` candidate from a pre-registered scale, or None."""
+        scale_view = self.scale(
+            fieldname=fieldname,
+            width=width,
+            height=height,
+            pre=True,
+            include_srcset=False,
+        )
+        if scale_view is None:
+            return None
+        return f"{scale_view.url} {scale_view.width}w"
+
+    def _collect_srcset_urls(self, fieldname, original_width, original_height, widest):
+        """Build the srcset candidate list from the configured scales.
+
+        Back-fills an original-size entry when no configured scale
+        already covers it — mirrors the parent's guard so an
+        undersized original still yields a non-empty srcset. The URL
+        always comes from a scale view, never a bare uid string.
+        """
+        urls = []
+        available_widths = [width for (width, _height) in self.available_sizes.values()]
+        if original_width not in available_widths and original_width <= widest:
+            entry = self._srcset_entry(fieldname, original_width, original_height)
+            if entry is not None:
+                urls.append(entry)
+        for _name, (width, height) in self.available_sizes.items():
+            if width <= widest:
+                entry = self._srcset_entry(fieldname, width, height)
+                if entry is not None:
+                    urls.append(entry)
+        return urls
+
+    def _tag_attributes(self, alt, css_class, title, sizes, srcset_urls, kwargs):
+        """img-tag attributes; title/alt default to the context title."""
+        attributes = {}
+        if title is _marker:
+            attributes["title"] = self.context.Title()
+        elif title:
+            attributes["title"] = title
+        if alt is _marker:
+            attributes["alt"] = self.context.Title()
+        else:
+            attributes["alt"] = alt
+        if css_class is not None:
+            attributes["class"] = css_class
+        attributes.update(**kwargs)
+        attributes["sizes"] = sizes
+        attributes["srcset"] = ", ".join(srcset_urls)
+        return attributes
+
+    def _pick_scale_in_src(self, scale_in_src, original_width):
+        """Fall back to the first configured scale that fits the original."""
+        if scale_in_src in self.available_sizes:
+            return scale_in_src
+        for key, (width, _height) in self.available_sizes.items():
+            if width <= original_width:
+                return key
+        return scale_in_src
+
+    def srcset(
         self,
         fieldname=None,
         scale_in_src="huge",
@@ -469,12 +537,9 @@ class ThumborImageScaling(ImageScaling):
         ``.url`` is a Thumbor URL (raster) or field URL (skip-types).
         """
         if fieldname is None:
-            try:
-                primary = IPrimaryFieldInfo(self.context, None)
-            except TypeError:
-                return
+            primary = self._primary_field_info()
             if primary is None:
-                return
+                return None
             fieldname = primary.fieldname
 
         data = getattr(self.context, fieldname, None)
@@ -501,57 +566,14 @@ class ThumborImageScaling(ImageScaling):
         source_size = _image_size(_select_source(data))
         widest = min(original_width, source_size[0]) if source_size else original_width
 
-        srcset_urls = []
+        srcset_urls = self._collect_srcset_urls(
+            fieldname, original_width, original_height, widest
+        )
+        attributes = self._tag_attributes(
+            alt, css_class, title, sizes, srcset_urls, kwargs
+        )
 
-        # Back-fill an original-size entry when no configured scale
-        # already covers it — mirrors the parent's guard so an
-        # undersized original still yields a non-empty srcset. The URL
-        # always comes from a scale view, never a bare uid string.
-        available_widths = [width for (width, _height) in self.available_sizes.values()]
-        if original_width not in available_widths and original_width <= widest:
-            scale_view = self.scale(
-                fieldname=fieldname,
-                width=original_width,
-                height=original_height,
-                pre=True,
-                include_srcset=False,
-            )
-            if scale_view is not None:
-                srcset_urls.append(f"{scale_view.url} {scale_view.width}w")
-
-        for _name, (width, height) in self.available_sizes.items():
-            if width <= widest:
-                scale_view = self.scale(
-                    fieldname=fieldname,
-                    width=width,
-                    height=height,
-                    pre=True,
-                    include_srcset=False,
-                )
-                if scale_view is not None:
-                    srcset_urls.append(f"{scale_view.url} {scale_view.width}w")
-
-        attributes = {}
-        if title is _marker:
-            attributes["title"] = self.context.Title()
-        elif title:
-            attributes["title"] = title
-        if alt is _marker:
-            attributes["alt"] = self.context.Title()
-        else:
-            attributes["alt"] = alt
-        if css_class is not None:
-            attributes["class"] = css_class
-        attributes.update(**kwargs)
-        attributes["sizes"] = sizes
-        attributes["srcset"] = ", ".join(srcset_urls)
-
-        if scale_in_src not in self.available_sizes:
-            for key, (width, _height) in self.available_sizes.items():
-                if width <= original_width:
-                    scale_in_src = key
-                    break
-
+        scale_in_src = self._pick_scale_in_src(scale_in_src, original_width)
         scale_view = self.scale(fieldname=fieldname, scale=scale_in_src, pre=True)
         if scale_view is None:
             return None

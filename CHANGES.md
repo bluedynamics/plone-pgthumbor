@@ -2,6 +2,11 @@
 
 ## 0.7.1 (unreleased)
 
+- Refactor `ThumborImageScaling.srcset` (complexity 21 → 8) below the C901
+  threshold and drop its `# noqa: C901` marker (#33). Primary-field lookup,
+  srcset candidate collection, tag-attribute assembly, and the
+  `scale_in_src` fallback pick are now dedicated helper methods; behavior
+  is unchanged.
 - Enable ruff's cyclomatic-complexity check (`C901`, mccabe) with
   `max-complexity = 15`. One existing hotspot is marked with a targeted
   `# noqa: C901` as a visible refactor candidate (`ThumborImageScaling.srcset`,

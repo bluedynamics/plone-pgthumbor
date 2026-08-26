@@ -451,7 +451,7 @@ class ThumborImageScaling(ImageScaling):
             return super()._scale_url(uid, extension, base_url, scale_info=scale_info)
         return _default_scale_url(self.context, uid, extension, base_url)
 
-    def srcset(
+    def srcset(  # noqa: C901
         self,
         fieldname=None,
         scale_in_src="huge",

@@ -2,6 +2,11 @@
 
 ## 0.7.1 (unreleased)
 
+- Enable ruff's cyclomatic-complexity check (`C901`, mccabe) with
+  `max-complexity = 15`. One existing hotspot is marked with a targeted
+  `# noqa: C901` as a visible refactor candidate (`ThumborImageScaling.srcset`,
+  complexity 21); `scripts/` is exempted via per-file-ignores (CLI code).
+
 - Tests: CI now runs the suite against `plone.namedfile` 7.x **and** 8.x.
   The two put a different `ImageScale` method on the live path —
   `scaling._HAS_SCALE_URL` forks on it — so a run that only ever saw one of

@@ -2,6 +2,9 @@
 
 ## 0.7.1 (unreleased)
 
+- Lower ruff's C901 max-complexity threshold from 15 to 13 as part of the
+  ecosystem-wide complexity ratchet. The code base passes as-is after the
+  `srcset` refactor (#33).
 - Refactor `ThumborImageScaling.srcset` (complexity 21 → 8) below the C901
   threshold and drop its `# noqa: C901` marker (#33). Primary-field lookup,
   srcset candidate collection, tag-attribute assembly, and the

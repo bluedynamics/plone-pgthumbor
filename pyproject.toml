@@ -92,6 +92,7 @@ select = [
     "A",
     "B",
     "C4",
+    "C901",
     "E",
     "F",
     "I",
@@ -109,7 +110,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"scripts/*" = ["T201"]
+"scripts/*" = ["C901", "T201"]
 
 [tool.ruff.lint.isort]
 force-single-line = true
@@ -118,6 +119,9 @@ lines-after-imports = 2
 lines-between-types = 1
 no-sections = true
 order-by-type = false
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15
 
 [tool.ruff.lint.pycodestyle]
 max-line-length = 120

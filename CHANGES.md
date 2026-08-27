@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.7.2 (unreleased)
+
 ## 0.7.1 (2026-08-27)
 
 - Fix: an environment variable can switch a boolean setting **off** again.

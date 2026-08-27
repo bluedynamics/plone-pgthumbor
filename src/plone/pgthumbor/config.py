@@ -21,6 +21,31 @@ SOURCE_MAX_EDGE_DEFAULT = 4000
 SOURCE_MAX_EDGE_CEILING = 8000
 
 
+# Only these count as "on".  Deliberately not widened while fixing #38 —
+# the set of accepted spellings is a separate decision from whether an
+# explicit "off" is honoured.
+_TRUTHY = frozenset({"true", "1", "yes"})
+
+
+def _env_bool(name: str) -> bool | None:
+    """A boolean from the environment, or None when the variable is unset.
+
+    The None is the whole point (#38).  Reading these by membership alone
+    made ``"false"``, ``"0"``, ``"no"`` and *unset* the same value, so an
+    explicit "off" could not be told apart from "no answer" — the registry
+    was consulted for both, and a registry "on" overrode the operator.  The
+    reference documentation promised the opposite, and these are the two
+    settings someone reaches for under pressure.
+
+    An empty value counts as **set**: ``VAR=`` in a compose file or a
+    ConfigMap is somebody saying off, not asking someone else.
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return None
+    return raw.strip().lower() in _TRUTHY
+
+
 def _clamp_source_max_edge(value: int) -> int:
     """Bound a cap to [0, SOURCE_MAX_EDGE_CEILING]."""
     return max(0, min(int(value), SOURCE_MAX_EDGE_CEILING))
@@ -43,6 +68,44 @@ class ThumborConfig:
             object.__setattr__(self, "server_url", self.server_url.rstrip("/"))
 
 
+def _registry_fallback(smart_cropping, paranoid_mode, source_max_edge):
+    """Fill in whatever the environment did not answer, from the registry.
+
+    Only ``None`` reaches the registry.  An explicit environment value —
+    including an explicit "off" — is never overridden, which is #38 and is
+    what the reference documentation always promised.
+    """
+    if None not in (smart_cropping, paranoid_mode, source_max_edge):
+        return smart_cropping, paranoid_mode, source_max_edge
+    try:
+        from plone.pgthumbor.interfaces import IThumborSettings
+        from plone.registry.interfaces import IRegistry
+        from zope.component import queryUtility
+
+        registry = queryUtility(IRegistry)
+        if registry is None:
+            return smart_cropping, paranoid_mode, source_max_edge
+        settings = registry.forInterface(
+            IThumborSettings, prefix="plone.pgthumbor.settings", check=False
+        )
+        if smart_cropping is None:
+            smart_cropping = bool(getattr(settings, "smart_cropping", False))
+        if paranoid_mode is None:
+            paranoid_mode = bool(getattr(settings, "paranoid_mode", False))
+        if source_max_edge is None:
+            stored = getattr(settings, "source_max_edge", None)
+            # isinstance, not truthiness: a stored 0 is meaningful.  bool is
+            # excluded because it is an int subclass, and a test double
+            # would otherwise int() its way to 1.  Clamp here too — the
+            # schema's max= guards writes through the control panel, but a
+            # record written before the bound existed never revalidates.
+            if isinstance(stored, int) and not isinstance(stored, bool):
+                source_max_edge = _clamp_source_max_edge(stored)
+    except Exception:
+        pass
+    return smart_cropping, paranoid_mode, source_max_edge
+
+
 def get_thumbor_config() -> ThumborConfig | None:
     """Get Thumbor configuration from environment variables.
 
@@ -53,7 +116,9 @@ def get_thumbor_config() -> ThumborConfig | None:
     if not server_url:
         return None
 
-    unsafe = os.environ.get("PGTHUMBOR_UNSAFE", "false").lower() in ("true", "1", "yes")
+    # No registry fallback for this one — upgrade_to_3 removed the record —
+    # so an unset value is simply off.
+    unsafe = bool(_env_bool("PGTHUMBOR_UNSAFE"))
     security_key = os.environ.get("PGTHUMBOR_SECURITY_KEY", "").strip()
 
     if not security_key and not unsafe:
@@ -62,23 +127,16 @@ def get_thumbor_config() -> ThumborConfig | None:
         )
         return None
 
-    smart_cropping = os.environ.get("PGTHUMBOR_SMART_CROPPING", "").lower() in (
-        "true",
-        "1",
-        "yes",
-    )
-    paranoid_mode = os.environ.get("PGTHUMBOR_PARANOID_MODE", "").lower() in (
-        "true",
-        "1",
-        "yes",
-    )
+    # Every setting with a registry fallback is read through a None
+    # sentinel, never through falsiness.  For the booleans that is #38: an
+    # explicit "false" has to beat a registry "true", which membership
+    # testing alone cannot express.  For the cap it is the documented kill
+    # switch: 0 means off, and reading it as "unset" would send us to the
+    # registry, which hands back 4000 and silently switches generation back
+    # on during exactly the bulk import or incident you reached for it in.
+    smart_cropping = _env_bool("PGTHUMBOR_SMART_CROPPING")
+    paranoid_mode = _env_bool("PGTHUMBOR_PARANOID_MODE")
 
-    # Read the cap through a None sentinel, never through falsiness.  The
-    # booleans above can get away with "falsy means unset" because their
-    # default is False either way.  Here 0 is the documented kill switch for
-    # derivative generation — the thing you reach for during a bulk import or
-    # an incident — and reading it as "unset" would send us to the registry,
-    # which hands back 4000 and silently switches generation back on.
     source_max_edge = None
     raw_max_edge = os.environ.get("PGTHUMBOR_SOURCE_MAX_EDGE")
     if raw_max_edge is not None:
@@ -90,35 +148,15 @@ def get_thumbor_config() -> ThumborConfig | None:
                 raw_max_edge,
             )
 
-    # Registry fallback for settings not in env
-    if not smart_cropping or not paranoid_mode or source_max_edge is None:
-        try:
-            from plone.pgthumbor.interfaces import IThumborSettings
-            from plone.registry.interfaces import IRegistry
-            from zope.component import queryUtility
+    smart_cropping, paranoid_mode, source_max_edge = _registry_fallback(
+        smart_cropping, paranoid_mode, source_max_edge
+    )
 
-            registry = queryUtility(IRegistry)
-            if registry is not None:
-                settings = registry.forInterface(
-                    IThumborSettings, prefix="plone.pgthumbor.settings", check=False
-                )
-                if not smart_cropping:
-                    smart_cropping = getattr(settings, "smart_cropping", False)
-                if not paranoid_mode:
-                    paranoid_mode = getattr(settings, "paranoid_mode", False)
-                if source_max_edge is None:
-                    stored = getattr(settings, "source_max_edge", None)
-                    # isinstance, not truthiness: a stored 0 is meaningful.
-                    # bool is excluded because it is an int subclass, and a
-                    # test double would otherwise int() its way to 1.
-                    if isinstance(stored, int) and not isinstance(stored, bool):
-                        # Clamp here too.  The schema's max= guards writes
-                        # through the control panel; a record written before
-                        # the bound existed never revalidates.
-                        source_max_edge = _clamp_source_max_edge(stored)
-        except Exception:
-            pass
-
+    # Neither environment nor registry had an answer.
+    if smart_cropping is None:
+        smart_cropping = False
+    if paranoid_mode is None:
+        paranoid_mode = False
     if source_max_edge is None:
         source_max_edge = SOURCE_MAX_EDGE_DEFAULT
 

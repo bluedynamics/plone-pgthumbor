@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from tests.conftest import env_override
 
+import pytest
+
 
 class TestGetThumborConfig:
     """Test get_thumbor_config() reads env vars correctly."""
@@ -328,3 +330,103 @@ class TestSourceMaxEdge:
         from plone.pgthumbor.config import SOURCE_MAX_EDGE_CEILING
 
         assert SOURCE_MAX_EDGE_CEILING**2 < 75_000_000
+
+
+class TestEnvironmentCanDisableABoolean:
+    """Issue #38.
+
+    The reference documentation promises that an environment variable takes
+    precedence and the registry value is ignored.  Reading the booleans by
+    membership made ``"false"``, ``"0"``, ``"no"`` and *unset* the same
+    value, so the registry was consulted for all four — and an explicit
+    "off" was overridden by a registry "on".
+
+    These are the two settings an operator reaches for under pressure:
+    ``PGTHUMBOR_PARANOID_MODE`` decides whether every image request is
+    access-checked against Plone.  Turning it off by environment and having
+    nothing happen is the worst shape of failure — it looks like it worked.
+    """
+
+    def _registry(self, monkeypatch, **settings):
+        from unittest.mock import MagicMock
+
+        stored = MagicMock()
+        stored.smart_cropping = settings.get("smart_cropping", False)
+        stored.paranoid_mode = settings.get("paranoid_mode", False)
+        stored.source_max_edge = settings.get("source_max_edge", 4000)
+        registry = MagicMock()
+        registry.forInterface.return_value = stored
+        monkeypatch.setattr("zope.component.queryUtility", lambda iface: registry)
+
+    def _env(self, monkeypatch, **kwargs):
+        env_override(
+            monkeypatch,
+            PGTHUMBOR_SERVER_URL="http://thumbor:8888",
+            PGTHUMBOR_SECURITY_KEY="key",
+            **kwargs,
+        )
+
+    def test_false_beats_a_registry_true_for_smart_cropping(self, monkeypatch):
+        from plone.pgthumbor.config import get_thumbor_config
+
+        self._env(monkeypatch, PGTHUMBOR_SMART_CROPPING="false")
+        self._registry(monkeypatch, smart_cropping=True)
+
+        assert get_thumbor_config().smart_cropping is False
+
+    def test_false_beats_a_registry_true_for_paranoid_mode(self, monkeypatch):
+        from plone.pgthumbor.config import get_thumbor_config
+
+        self._env(monkeypatch, PGTHUMBOR_PARANOID_MODE="false")
+        self._registry(monkeypatch, paranoid_mode=True)
+
+        assert get_thumbor_config().paranoid_mode is False
+
+    def test_true_still_beats_a_registry_false(self, monkeypatch):
+        from plone.pgthumbor.config import get_thumbor_config
+
+        self._env(monkeypatch, PGTHUMBOR_SMART_CROPPING="true")
+        self._registry(monkeypatch, smart_cropping=False)
+
+        assert get_thumbor_config().smart_cropping is True
+
+    def test_unset_still_falls_back_to_the_registry(self, monkeypatch):
+        from plone.pgthumbor.config import get_thumbor_config
+
+        # The whole point of the fallback, and it has to keep working —
+        # "unset" is the only state that may reach the registry.
+        self._env(monkeypatch)
+        self._registry(monkeypatch, smart_cropping=True, paranoid_mode=True)
+
+        config = get_thumbor_config()
+
+        assert config.smart_cropping is True
+        assert config.paranoid_mode is True
+
+    @pytest.mark.parametrize("value", ["false", "0", "no", "off", "", "  FALSE  "])
+    def test_every_off_spelling_disables(self, monkeypatch, value):
+        from plone.pgthumbor.config import get_thumbor_config
+
+        self._env(monkeypatch, PGTHUMBOR_SMART_CROPPING=value)
+        self._registry(monkeypatch, smart_cropping=True)
+
+        assert get_thumbor_config().smart_cropping is False
+
+    @pytest.mark.parametrize("value", ["true", "1", "yes", " TRUE "])
+    def test_every_on_spelling_enables(self, monkeypatch, value):
+        from plone.pgthumbor.config import get_thumbor_config
+
+        self._env(monkeypatch, PGTHUMBOR_SMART_CROPPING=value)
+        self._registry(monkeypatch, smart_cropping=False)
+
+        assert get_thumbor_config().smart_cropping is True
+
+    def test_no_registry_at_all_still_defaults_to_off(self, monkeypatch):
+        from plone.pgthumbor.config import get_thumbor_config
+
+        self._env(monkeypatch)
+
+        config = get_thumbor_config()
+
+        assert config.smart_cropping is False
+        assert config.paranoid_mode is False

@@ -2,6 +2,22 @@
 
 ## 0.7.1 (unreleased)
 
+- Fix: an environment variable can switch a boolean setting **off** again.
+  [#38](https://github.com/bluedynamics/plone-pgthumbor/issues/38).
+
+  `PGTHUMBOR_SMART_CROPPING=false` against a registry value of `True` produced
+  `True`. Reading these by membership made `"false"`, `"0"`, `"no"` and *unset*
+  the same value, so an explicit "off" could not be told apart from "no answer";
+  the registry was consulted for both and its "on" won. The reference
+  documentation has always promised the opposite, and these are the two settings
+  an operator reaches for under pressure — `PGTHUMBOR_PARANOID_MODE` decides
+  whether every image request is access-checked against Plone.
+
+  Both are now read through a `None` sentinel, the same way
+  `PGTHUMBOR_SOURCE_MAX_EDGE` already was. An empty value counts as set: `VAR=`
+  in a compose file or a ConfigMap means off, not "ask the registry". The set of
+  spellings accepted as "on" is unchanged.
+
 - Fix: the `image_scales` metadata's top-level `download` points at the original
   again, instead of at a Thumbor render.
   Half of [#15](https://github.com/bluedynamics/plone-pgthumbor/issues/15).

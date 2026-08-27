@@ -2,6 +2,29 @@
 
 ## 0.7.1 (unreleased)
 
+- Fix: `purge_scales` reindexes only the objects it actually changed, and can
+  be walked in bounded slices. Both halves of
+  [#16](https://github.com/bluedynamics/plone-pgthumbor/issues/16) that 0.7.0
+  left open.
+
+  `_has_image_scales_metadata()` asks the catalog *schema*, which is constant
+  for a whole run, so deciding on it alone reindexed every catalogued object
+  rather than the handful whose annotation was deleted — O(site) catalog
+  writes for O(objects-with-legacy-scales) of work. It is now asked once per
+  run instead of once per object, and the reindex happens only where an
+  annotation was actually removed.
+
+  `purge_scales()` takes `limit` and `start` and returns `next_start` and
+  `done`, so a site too large to finish in one request or one process can be
+  walked in slices. `@@thumbor-purge-scales?limit=1000&start=0` reports where
+  to resume; the `zconsole` entry point reads `PURGE_LIMIT` and `PURGE_START`.
+  A bounded walk sorts on `path` — the default order is whatever PostgreSQL
+  returns and is not stable across queries, and an offset into an unstable
+  order silently skips objects on resume. Paths do not change during a purge,
+  which is what makes ordering on them safe here.
+
+  `purge_scales()` now returns a dict rather than a 4-tuple.
+
 - Lower ruff's C901 max-complexity threshold from 15 to 13 as part of the
   ecosystem-wide complexity ratchet. The code base passes as-is after the
   `srcset` refactor (#33).

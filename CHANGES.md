@@ -2,6 +2,33 @@
 
 ## 0.7.1 (unreleased)
 
+- Fix: the `image_scales` metadata's top-level `download` points at the original
+  again, instead of at a Thumbor render.
+  Half of [#15](https://github.com/bluedynamics/plone-pgthumbor/issues/15).
+
+  `ImageFieldScales.get_original_image_url` builds that value by asking for a
+  scale at the original's *own* dimensions, which under Thumbor came back as a
+  Thumbor URL. That was wrong twice. It is not the original — a 1:1 request
+  through an image processor is at best a re-encode, and since 0.7.0 a Thumbor
+  URL names the *source derivative*, so a "download original" link handed over
+  a capped, colour-converted rendition rather than the uploaded bytes. And it is
+  not context-relative, which the metadata contract requires: with
+  `PGTHUMBOR_SERVER_URL=/thumbor` there is no context prefix to strip, so the
+  stored value was `thumbor/<signed>` and the renderer emitted
+  `{image_url}/thumbor/<signed>` — broken for every consumer of the column,
+  including `plone.namedfile`'s own `tag()`.
+
+  It now returns the field's own `@@images/{fieldname}` URL, which Plone serves
+  from the original blob. The new adapter is registered for
+  `IPlonePgthumborLayer`, which is more specific than `plone.namedfile`'s own
+  registration, so it wins the lookup without an override and sites without the
+  add-on keep the stock behaviour.
+
+  The per-scale `download` entries are unchanged: those *should* be Thumbor
+  URLs, and their own version of the host-root problem is the rest of #15,
+  which is tangled with
+  [#7](https://github.com/bluedynamics/plone-pgthumbor/issues/7).
+
 - Fix: `purge_scales` reindexes only the objects it actually changed, and can
   be walked in bounded slices. Both halves of
   [#16](https://github.com/bluedynamics/plone-pgthumbor/issues/16) that 0.7.0

@@ -23,6 +23,7 @@ from plone.pgthumbor.zconsole import require_thumbor_request
 from zope.annotation.interfaces import IAnnotations
 
 import logging
+import os
 import transaction
 
 
@@ -31,81 +32,123 @@ logger = logging.getLogger(__name__)
 ANNOTATION_KEY = "plone.scale"
 
 
-def purge_scales(portal, batch_size=500):
-    """Remove plone.scale annotations and reindex image_scales metadata.
+def _brains(catalog, start, limit):
+    """A slice of the catalog that is safe to resume into.
 
-    Walks the catalog, checks each object for scale annotations,
-    deletes them, and reindexes image_scales so the catalog metadata
-    reflects the new Thumbor-based scale storage.
+    ``sort_on="path"`` whenever a slice is asked for.  The default order is
+    whatever PostgreSQL hands back and is not stable across queries, so an
+    offset into it would silently skip objects on the next call.  Paths do
+    not change during a purge, which is what makes ordering on them safe
+    here — a rename mid-run would not be.
 
-    Commits in batches to avoid unbounded memory use.
+    Without a *limit* the whole catalog comes back unsorted, as before:
+    there is nothing to resume into, so the sort would be pure cost.
+    """
+    if limit is None:
+        return catalog.unrestrictedSearchResults()
+    return catalog.unrestrictedSearchResults(
+        sort_on="path", b_start=start, b_size=limit
+    )
 
-    Returns (purged_count, reindexed_count, skipped_count, total_count).
+
+def _annotations_of(obj):
+    """The annotation mapping for *obj*, or None when it has none."""
+    try:
+        return IAnnotations(obj, None)
+    except TypeError:
+        return None
+
+
+def _purge_one(brain, reindex):
+    """Purge one object.  Returns ``"purged"``, ``"clean"`` or ``"skipped"``."""
+    try:
+        obj = brain._unrestrictedGetObject()
+    except Exception:
+        return "skipped"
+
+    annotations = _annotations_of(obj)
+    if annotations is None:
+        return "skipped"
+    if ANNOTATION_KEY not in annotations:
+        return "clean"
+
+    del annotations[ANNOTATION_KEY]
+    if reindex:
+        try:
+            # Only here.  The catalog schema is constant for a run, so
+            # deciding on it alone reindexed every object in the site — an
+            # O(site) pile of catalog writes for O(objects-with-scales) of
+            # actual work.  idxs= keeps notifyModified() out of it.
+            obj.reindexObject(idxs=["image_scales"])
+            return "purged+reindexed"
+        except Exception:
+            logger.debug(
+                "Could not reindex image_scales for %s",
+                brain.getPath(),
+                exc_info=True,
+            )
+    return "purged"
+
+
+def purge_scales(portal, batch_size=500, limit=None, start=0):
+    """Remove plone.scale annotations and reindex what changed.
+
+    Walks the catalog, deletes legacy scale annotations, and reindexes
+    ``image_scales`` **only for the objects it actually changed**.
+
+    Pass *limit* to bound the walk and *start* to resume it, so a site too
+    large to finish in one request or one process can be done in slices.
+    The returned ``next_start`` is what to pass back in; ``done`` says the
+    catalog is exhausted.
+
+    Returns a dict: purged, reindexed, skipped, processed, next_start, done.
     """
     catalog = portal.portal_catalog
-    brains = catalog.unrestrictedSearchResults()
-    total = len(brains)
+    # Once per run, not once per object: it asks the catalog schema, which
+    # cannot change underneath a single walk.
+    reindex = _has_image_scales_metadata(catalog)
+    brains = _brains(catalog, start, limit)
 
-    purged = 0
-    reindexed = 0
-    skipped = 0
+    counts = {"purged": 0, "reindexed": 0, "skipped": 0}
+    processed = 0
     changed = 0
 
     for brain in brains:
-        try:
-            obj = brain._unrestrictedGetObject()
-        except Exception:
-            skipped += 1
+        processed += 1
+        outcome = _purge_one(brain, reindex)
+        if outcome == "skipped":
+            counts["skipped"] += 1
             continue
-
-        try:
-            annotations = IAnnotations(obj, None)
-        except TypeError:
-            skipped += 1
+        if outcome == "clean":
             continue
+        counts["purged"] += 1
+        changed += 1
+        if outcome == "purged+reindexed":
+            counts["reindexed"] += 1
 
-        if annotations is None:
-            skipped += 1
-            continue
-
-        if ANNOTATION_KEY in annotations:
-            del annotations[ANNOTATION_KEY]
-            purged += 1
-            changed += 1
-
-        # Reindex image_scales metadata if the catalog has it
-        if _has_image_scales_metadata(catalog):
-            try:
-                obj.reindexObject(idxs=["image_scales"])
-                reindexed += 1
-                changed += 1
-            except Exception:
-                logger.debug(
-                    "Could not reindex image_scales for %s",
-                    brain.getPath(),
-                    exc_info=True,
-                )
-
-        if changed > 0 and changed % batch_size == 0:
+        if changed % batch_size == 0:
             transaction.commit()
             logger.info(
-                "Progress: %d purged, %d reindexed of %d...",
-                purged,
-                reindexed,
-                total,
+                "Progress: %d purged, %d reindexed...",
+                counts["purged"],
+                counts["reindexed"],
             )
 
     if changed > 0:
         transaction.commit()
 
+    counts["processed"] = processed
+    counts["next_start"] = start + processed
+    counts["done"] = limit is None or processed < limit
     logger.info(
-        "Done. Purged %d, reindexed %d (%d skipped, %d total).",
-        purged,
-        reindexed,
-        skipped,
-        total,
+        "Purged %d, reindexed %d (%d skipped, %d processed%s).",
+        counts["purged"],
+        counts["reindexed"],
+        counts["skipped"],
+        processed,
+        "" if counts["done"] else f", resume at {counts['next_start']}",
     )
-    return purged, reindexed, skipped, total
+    return counts
 
 
 def _has_image_scales_metadata(catalog):
@@ -116,6 +159,24 @@ def _has_image_scales_metadata(catalog):
         return False
 
 
+def _env_int(name, default=None):
+    """Read a positive integer from the environment, or *default*."""
+    try:
+        value = int(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+    return value if value >= 0 else default
+
+
+def _int_param(request, name, default=None):
+    """Read a positive integer from the request, or *default*."""
+    try:
+        value = int(request.form[name])
+    except (KeyError, TypeError, ValueError):
+        return default
+    return value if value >= 0 else default
+
+
 class PurgeScalesView:
     """@@thumbor-purge-scales browser view."""
 
@@ -124,12 +185,26 @@ class PurgeScalesView:
         self.request = request
 
     def __call__(self):
-        purged, reindexed, skipped, total = purge_scales(self.context)
-        self.request.response.setHeader("Content-Type", "text/plain")
-        return (
-            f"Purged {purged}, reindexed {reindexed} "
-            f"({skipped} skipped, {total} total)."
+        """Purge, optionally one bounded slice at a time.
+
+        ``?limit=1000&start=0`` walks that many objects and reports where
+        to resume.  Without a limit this runs the whole catalog in one
+        request, which on a large site does not finish before the request
+        does — hence the parameters (issue #16).
+        """
+        result = purge_scales(
+            self.context,
+            limit=_int_param(self.request, "limit"),
+            start=_int_param(self.request, "start", default=0) or 0,
         )
+        self.request.response.setHeader("Content-Type", "text/plain")
+        line = (
+            f"Purged {result['purged']}, reindexed {result['reindexed']} "
+            f"({result['skipped']} skipped, {result['processed']} processed)."
+        )
+        if result["done"]:
+            return line + " Done."
+        return line + f" Not done — resume with ?start={result['next_start']}"
 
 
 def main(app, args):
@@ -157,11 +232,18 @@ def main(app, args):
     newSecurityManager(None, admin.__of__(app.acl_users))
 
     portal = app[site_id]
-    purged, reindexed, skipped, total = purge_scales(portal)
+    # Bounded slices, so one process does not have to hold the whole walk.
+    # PURGE_LIMIT with no PURGE_START runs a single slice and prints where
+    # to resume; leaving both unset keeps the old whole-catalog behaviour.
+    limit = _env_int("PURGE_LIMIT")
+    result = purge_scales(portal, limit=limit, start=_env_int("PURGE_START", default=0))
     logger.info(
-        "Purged %d, reindexed %d (%d skipped, %d total).",
-        purged,
-        reindexed,
-        skipped,
-        total,
+        "Purged %d, reindexed %d (%d skipped, %d processed).",
+        result["purged"],
+        result["reindexed"],
+        result["skipped"],
+        result["processed"],
     )
+    if not result["done"]:
+        logger.info("Not done. Resume with PURGE_START=%d.", result["next_start"])
+    return result

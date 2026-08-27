@@ -27,6 +27,19 @@ def _make_obj(has_scales=False):
     return obj, annotations
 
 
+def _make_sliceable_portal(brains, has_image_scales_meta=True):
+    """A portal whose catalog honours b_start/b_size like pgcatalog does."""
+    portal = _make_portal(brains, has_image_scales_meta)
+
+    def search(**query):
+        start = query.get("b_start", 0)
+        size = query.get("b_size")
+        return brains[start : start + size] if size else brains[start:]
+
+    portal.portal_catalog.unrestrictedSearchResults.side_effect = search
+    return portal
+
+
 def _make_portal(brains, has_image_scales_meta=True):
     portal = MagicMock()
     portal.portal_catalog.unrestrictedSearchResults.return_value = brains
@@ -54,12 +67,13 @@ class TestPurgeScales:
             ]
         )
 
-        purged, reindexed, skipped, total = purge_scales(portal)
+        result = purge_scales(portal)
 
-        assert purged == 2
-        assert reindexed == 3
-        assert skipped == 0
-        assert total == 3
+        assert result["purged"] == 2
+        # Two, not three: only the objects actually changed are reindexed.
+        assert result["reindexed"] == 2
+        assert result["skipped"] == 0
+        assert result["processed"] == 3
         assert ANNOTATION_KEY not in ann1
         assert ANNOTATION_KEY not in ann3
         mock_txn.commit.assert_called()
@@ -84,10 +98,10 @@ class TestPurgeScales:
 
         portal = _make_portal([_make_brain(obj)], has_image_scales_meta=False)
 
-        purged, reindexed, _skipped, _total = purge_scales(portal)
+        result = purge_scales(portal)
 
-        assert purged == 1
-        assert reindexed == 0
+        assert result["purged"] == 1
+        assert result["reindexed"] == 0
         obj.reindexObject.assert_not_called()
 
     @patch("plone.pgthumbor.purge_scales.transaction")
@@ -98,12 +112,12 @@ class TestPurgeScales:
 
         portal = _make_portal([brain])
 
-        purged, reindexed, skipped, total = purge_scales(portal)
+        result = purge_scales(portal)
 
-        assert purged == 0
-        assert reindexed == 0
-        assert skipped == 1
-        assert total == 1
+        assert result["purged"] == 0
+        assert result["reindexed"] == 0
+        assert result["skipped"] == 1
+        assert result["processed"] == 1
         mock_txn.commit.assert_not_called()
 
     @patch("plone.pgthumbor.purge_scales.transaction")
@@ -113,12 +127,12 @@ class TestPurgeScales:
 
         portal = _make_portal([_make_brain(MagicMock())])
 
-        purged, reindexed, skipped, total = purge_scales(portal)
+        result = purge_scales(portal)
 
-        assert purged == 0
-        assert reindexed == 0
-        assert skipped == 1
-        assert total == 1
+        assert result["purged"] == 0
+        assert result["reindexed"] == 0
+        assert result["skipped"] == 1
+        assert result["processed"] == 1
 
     @patch("plone.pgthumbor.purge_scales.transaction")
     @patch("plone.pgthumbor.purge_scales.IAnnotations")
@@ -128,9 +142,9 @@ class TestPurgeScales:
 
         portal = _make_portal([_make_brain(MagicMock())], has_image_scales_meta=False)
 
-        purged, _reindexed, _skipped, _total = purge_scales(portal)
+        result = purge_scales(portal)
 
-        assert purged == 0
+        assert result["purged"] == 0
         mock_txn.commit.assert_not_called()
 
     @patch("plone.pgthumbor.purge_scales.transaction")
@@ -160,29 +174,73 @@ class TestPurgeScales:
 
         portal = _make_portal([_make_brain(obj)])
 
-        purged, reindexed, skipped, _total = purge_scales(portal)
+        result = purge_scales(portal)
 
-        assert purged == 1
-        assert reindexed == 0
-        assert skipped == 0
+        # Still purged, just not reindexed — the annotation is gone either
+        # way, and a stale image_scales row is better than an aborted run.
+        assert result["purged"] == 1
+        assert result["reindexed"] == 0
+        assert result["skipped"] == 0
 
 
 class TestPurgeScalesView:
+    @staticmethod
+    def _request(**form):
+        request = MagicMock()
+        request.form = dict(form)
+        return request
+
+    @staticmethod
+    def _result(**overrides):
+        base = {
+            "purged": 10,
+            "reindexed": 45,
+            "skipped": 2,
+            "processed": 50,
+            "next_start": 50,
+            "done": True,
+        }
+        base.update(overrides)
+        return base
+
     @patch("plone.pgthumbor.purge_scales.purge_scales")
     def test_view_calls_purge_and_returns_text(self, mock_purge):
-        mock_purge.return_value = (10, 45, 2, 50)
+        mock_purge.return_value = self._result()
         context = MagicMock()
-        request = MagicMock()
+        request = self._request()
 
-        view = PurgeScalesView(context, request)
-        result = view()
+        result = PurgeScalesView(context, request)()
 
-        mock_purge.assert_called_once_with(context)
+        mock_purge.assert_called_once_with(context, limit=None, start=0)
         assert "10" in result
         assert "45" in result
         assert "2 skipped" in result
-        assert "50 total" in result
+        assert "50 processed" in result
+        assert "Done." in result
         request.response.setHeader.assert_called_once_with("Content-Type", "text/plain")
+
+    @patch("plone.pgthumbor.purge_scales.purge_scales")
+    def test_the_view_passes_limit_and_start_through(self, mock_purge):
+        mock_purge.return_value = self._result(done=False, next_start=1000)
+
+        result = PurgeScalesView(MagicMock(), self._request(limit="500", start="500"))()
+
+        mock_purge.assert_called_once_with(
+            mock_purge.call_args.args[0], limit=500, start=500
+        )
+        # The whole point: the caller is told where to pick up, so a site
+        # too large for one request can be walked in bounded ones.
+        assert "resume with ?start=1000" in result
+
+    @patch("plone.pgthumbor.purge_scales.purge_scales")
+    def test_rubbish_parameters_fall_back_rather_than_raise(self, mock_purge):
+        mock_purge.return_value = self._result()
+
+        PurgeScalesView(MagicMock(), self._request(limit="lots", start="-5"))()
+
+        mock_purge.assert_called_once_with(
+            mock_purge.call_args.args[0], limit=None, start=0
+        )
 
 
 class TestMainRequestContext:
@@ -227,7 +285,19 @@ class TestMainRequestContext:
             lambda: order.append("require"),
         )
         monkeypatch.setattr(
-            module, "purge_scales", lambda portal: order.append("purge") or (0, 0, 0, 0)
+            module,
+            "purge_scales",
+            lambda portal, **kw: (
+                order.append("purge")
+                or {
+                    "purged": 0,
+                    "reindexed": 0,
+                    "skipped": 0,
+                    "processed": 0,
+                    "next_start": 0,
+                    "done": True,
+                }
+            ),
         )
         monkeypatch.setattr(
             "AccessControl.SecurityManagement.newSecurityManager",
@@ -246,3 +316,135 @@ class TestMainRequestContext:
         module.main(app, self._args())
 
         assert order == ["establish", "require", "purge"]
+
+
+class TestReindexOnlyWhatWasPurged:
+    """Issue #16, problem 1.
+
+    ``_has_image_scales_metadata`` asks the *catalog schema*, which is
+    constant for the whole run, so the old code reindexed every catalogued
+    object rather than the ones it actually changed.  On a site with 139k
+    objects and a handful of legacy scales that is O(site) catalog writes
+    for O(handful) of work.
+    """
+
+    @patch("plone.pgthumbor.purge_scales.transaction")
+    @patch("plone.pgthumbor.purge_scales.IAnnotations")
+    def test_an_untouched_object_is_not_reindexed(self, mock_ia, mock_txn):
+        from plone.pgthumbor.purge_scales import purge_scales
+
+        purged_obj, purged_ann = _make_obj(has_scales=True)
+        clean_obj, clean_ann = _make_obj(has_scales=False)
+        mock_ia.side_effect = [purged_ann, clean_ann]
+        portal = _make_portal([_make_brain(purged_obj), _make_brain(clean_obj)])
+
+        result = purge_scales(portal)
+
+        purged_obj.reindexObject.assert_called_once_with(idxs=["image_scales"])
+        clean_obj.reindexObject.assert_not_called()
+        assert result["purged"] == 1
+        assert result["reindexed"] == 1
+
+    @patch("plone.pgthumbor.purge_scales.transaction")
+    @patch("plone.pgthumbor.purge_scales.IAnnotations")
+    def test_the_schema_is_asked_once_not_per_object(self, mock_ia, mock_txn):
+        from plone.pgthumbor.purge_scales import purge_scales
+
+        objs = [_make_obj(has_scales=True) for _ in range(5)]
+        mock_ia.side_effect = [ann for _, ann in objs]
+        portal = _make_portal([_make_brain(obj) for obj, _ in objs])
+
+        purge_scales(portal)
+
+        # It answers the same for every object in a run, so asking per
+        # object is a catalog round trip per object for nothing.
+        assert portal.portal_catalog.schema.call_count == 1
+
+
+class TestChunking:
+    """Issue #16, problem 2: the walk has to be resumable in bounded slices."""
+
+    @patch("plone.pgthumbor.purge_scales.transaction")
+    @patch("plone.pgthumbor.purge_scales.IAnnotations")
+    def test_a_limit_bounds_the_slice(self, mock_ia, mock_txn):
+        from plone.pgthumbor.purge_scales import purge_scales
+
+        objs = [_make_obj(has_scales=True) for _ in range(10)]
+        mock_ia.side_effect = [ann for _, ann in objs]
+        portal = _make_sliceable_portal([_make_brain(obj) for obj, _ in objs])
+
+        result = purge_scales(portal, limit=4)
+
+        assert result["processed"] == 4
+        assert result["next_start"] == 4
+        assert result["done"] is False
+
+    @patch("plone.pgthumbor.purge_scales.transaction")
+    @patch("plone.pgthumbor.purge_scales.IAnnotations")
+    def test_it_resumes_from_next_start(self, mock_ia, mock_txn):
+        from plone.pgthumbor.purge_scales import purge_scales
+
+        objs = [_make_obj(has_scales=True) for _ in range(10)]
+        mock_ia.side_effect = [ann for _, ann in objs]
+        brains = [
+            _make_brain(obj, path=f"/site/{i:02d}") for i, (obj, _) in enumerate(objs)
+        ]
+        portal = _make_sliceable_portal(brains)
+
+        first = purge_scales(portal, limit=4)
+        second = purge_scales(portal, limit=4, start=first["next_start"])
+
+        assert second["next_start"] == 8
+        # Objects 4..7, not 0..3 again.
+        walked = [obj for obj, _ in objs]
+        assert walked[4].reindexObject.called
+        assert walked[0].reindexObject.call_count == 1
+
+    @patch("plone.pgthumbor.purge_scales.transaction")
+    @patch("plone.pgthumbor.purge_scales.IAnnotations")
+    def test_a_short_slice_means_done(self, mock_ia, mock_txn):
+        from plone.pgthumbor.purge_scales import purge_scales
+
+        objs = [_make_obj(has_scales=True) for _ in range(3)]
+        mock_ia.side_effect = [ann for _, ann in objs]
+        portal = _make_sliceable_portal([_make_brain(obj) for obj, _ in objs])
+
+        result = purge_scales(portal, limit=10)
+
+        assert result["processed"] == 3
+        assert result["done"] is True
+
+    @patch("plone.pgthumbor.purge_scales.transaction")
+    @patch("plone.pgthumbor.purge_scales.IAnnotations")
+    def test_a_chunked_walk_sorts_on_path(self, mock_ia, mock_txn):
+        from plone.pgthumbor.purge_scales import purge_scales
+
+        mock_ia.side_effect = []
+        portal = _make_sliceable_portal([])
+
+        purge_scales(portal, limit=5)
+
+        # Without an explicit sort the order is whatever PostgreSQL
+        # returns, which is not stable across queries — and an offset into
+        # an unstable order silently skips objects on resume.  Paths do not
+        # change during a purge, so ordering on them is safe.
+        query = portal.portal_catalog.unrestrictedSearchResults.call_args.kwargs
+        assert query["sort_on"] == "path"
+        assert query["b_start"] == 0
+        assert query["b_size"] == 5
+
+    @patch("plone.pgthumbor.purge_scales.transaction")
+    @patch("plone.pgthumbor.purge_scales.IAnnotations")
+    def test_an_unchunked_walk_stays_as_before(self, mock_ia, mock_txn):
+        from plone.pgthumbor.purge_scales import purge_scales
+
+        mock_ia.side_effect = []
+        portal = _make_portal([])
+
+        result = purge_scales(portal)
+
+        # No limit means the whole catalog in one go, the old behaviour,
+        # and no cost for sorting it.
+        query = portal.portal_catalog.unrestrictedSearchResults.call_args.kwargs
+        assert "b_size" not in query
+        assert result["done"] is True

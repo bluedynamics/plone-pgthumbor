@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.1 (unreleased)
+## 0.7.1 (2026-08-27)
 
 - Fix: an environment variable can switch a boolean setting **off** again.
   [#38](https://github.com/bluedynamics/plone-pgthumbor/issues/38).

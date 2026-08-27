@@ -44,6 +44,19 @@
       permission="zope2.View"
       layer=".interfaces.IPlonePgthumborLayer"
       />
+  <!-- image_scales metadata: keep the original's download pointing at the
+       original.  Registered for IPlonePgthumborLayer, which is strictly
+       more specific than plone.namedfile's own (field, content, Interface)
+       registration, so it wins the lookup without an overrides.zcml
+       entry and sites without the add-on keep the stock adapter. -->
+  <adapter
+      for="plone.namedfile.interfaces.INamedImageField
+           plone.dexterity.interfaces.IDexterityContent
+           .interfaces.IPlonePgthumborLayer"
+      factory=".adapters.ThumborImageFieldScales"
+      provides="plone.base.interfaces.IImageScalesFieldAdapter"
+      />
+
   <!-- Thumbor settings control panel -->
   <browser:page
       name="thumbor-settings"

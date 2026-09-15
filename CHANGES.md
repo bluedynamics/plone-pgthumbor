@@ -2,6 +2,12 @@
 
 ## 0.7.2 (unreleased)
 
+- Chore: pin ruff to 0.16.7 in the QA workflow (and the matching
+  `ruff-pre-commit` rev) instead of running unpinned `uvx ruff`, so ruff
+  releases no longer change CI behavior on unrelated PRs. Part of the
+  ecosystem-wide alignment
+  [bluedynamics/plone-pgcatalog#217](https://github.com/bluedynamics/plone-pgcatalog/issues/217).
+
 ## 0.7.1 (2026-08-27)
 
 - Fix: an environment variable can switch a boolean setting **off** again.

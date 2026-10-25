@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.7.3 (unreleased)
+
 ## 0.7.2 (2026-10-25)
 
 - Fix: building a Thumbor URL no longer downloads the image blob.

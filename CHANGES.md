@@ -2,6 +2,19 @@
 
 ## 0.7.2 (unreleased)
 
+- Fix: building a Thumbor URL no longer downloads the image blob.
+  [#45](https://github.com/bluedynamics/plone-pgthumbor/issues/45).
+
+  `get_blob_ids()` only needs the blob's serial, but got it by activating the
+  `Blob`. Unghosting a `Blob` makes `Connection.setstate` call
+  `storage.loadBlob`, which fetches the whole file into the local blob cache:
+  on S3-tiered storage, a full download for every `tag()`/`scale()` that missed
+  the cache. With a source derivative in place it fetched the large original
+  as well, to compare `source_ids`. The serial of a ghost blob is now looked up
+  with `storage.load()` on the connection's own (MVCC) storage, the same call
+  `setstate` makes, without the `loadBlob` that follows it. The ghost's own
+  `_p_serial` is not used: after an invalidation it still holds the old serial.
+
 - Chore: pin ruff to 0.16.7 in the QA workflow (and the matching
   `ruff-pre-commit` rev) instead of running unpinned `uvx ruff`, so ruff
   releases no longer change CI behavior on unrelated PRs. Part of the

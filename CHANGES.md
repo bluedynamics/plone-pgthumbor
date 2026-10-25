@@ -17,6 +17,11 @@
   `setstate` makes, without the `loadBlob` that follows it. The ghost's own
   `_p_serial` is not used: after an invalidation it still holds the old serial.
 
+- Chore: test Python 3.14 and 3.15 in CI (both namedfile 7.x and 8.x) and
+  declare 3.15 support. 3.14 was declared but never tested. The test suite
+  passes on 3.15.0 without code changes. The development Thumbor image stays
+  on Python 3.13.
+
 - Chore: pin ruff to 0.16.7 in the QA workflow (and the matching
   `ruff-pre-commit` rev) instead of running unpinned `uvx ruff`, so ruff
   releases no longer change CI behavior on unrelated PRs. Part of the

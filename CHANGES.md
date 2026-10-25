@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.2 (unreleased)
+## 0.7.2 (2026-10-25)
 
 - Fix: building a Thumbor URL no longer downloads the image blob.
   [#45](https://github.com/bluedynamics/plone-pgthumbor/issues/45).
